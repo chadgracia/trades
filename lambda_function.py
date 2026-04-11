@@ -219,6 +219,7 @@ def format_valuation(valuation):
     return f" (${valuation:.1f}Bn)"
 
 def lambda_handler(event, context):
+    logger.info('Event received: %s', json.dumps(event))
     logger.info("Lambda function started")
 
     # Dispatch POST requests to the natural-language search handler.
