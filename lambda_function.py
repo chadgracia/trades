@@ -1,6 +1,8 @@
 import json
 import os
 import base64
+import urllib.request
+import urllib.error
 import boto3
 import logging
 
@@ -29,83 +31,104 @@ def _load_deals_from_s3():
 def _call_claude_for_matching_ids(query, deals):
     """Ask Claude which deal IDs match the user's natural-language query.
 
-    Uses tool_use with a forced tool_choice for structured output, and prompt
+    POSTs directly to https://api.anthropic.com/v1/messages with urllib.request
+    (stdlib, always available in Lambda — no external dependencies). Uses
+    tool_use with a forced tool_choice for structured output, and prompt
     caching on the deals payload so repeated queries reuse the cached prefix.
     """
     api_key = os.environ.get('ANTHROPIC_API_KEY')
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY environment variable is not set")
 
-    # Lazy import so the GET path never requires the anthropic package.
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=api_key)
-
     # sort_keys makes serialization deterministic so the cached prefix is stable.
     deals_json = json.dumps(deals, sort_keys=True, default=str)
 
-    system_blocks = [
-        {
-            "type": "text",
-            "text": (
-                "You are a search assistant for a private secondary market deals platform. "
-                "The user will ask a question in natural language about a list of deals, and "
-                "you will be given the full deals data as JSON. Identify which deals match the "
-                "user's query and return their IDs using the return_matching_deals tool. "
-                "Match intelligently on company name, deal type (bid/offer), structure "
-                "(direct/fund/forward), price ranges, ticket sizes, management fee, carry, "
-                "stage, data room availability, highlighted status, and any other relevant "
-                "fields present in the data. If the query is broad or ambiguous, err on the "
-                "side of including possibly relevant deals. Use the exact 'id' field from each "
-                "deal as it appears in the data."
-            ),
-        },
-        {
-            "type": "text",
-            "text": "DEALS DATA (JSON):\n" + deals_json,
-            "cache_control": {"type": "ephemeral"},
-        },
-    ]
-
-    tools = [
-        {
-            "name": "return_matching_deals",
-            "description": "Return the list of deal IDs that match the user's query.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "deal_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Array of matching deal IDs. Use the exact 'id' field from each deal.",
-                    }
-                },
-                "required": ["deal_ids"],
+    payload = {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 4096,
+        "system": [
+            {
+                "type": "text",
+                "text": (
+                    "You are a search assistant for a private secondary market deals platform. "
+                    "The user will ask a question in natural language about a list of deals, and "
+                    "you will be given the full deals data as JSON. Identify which deals match the "
+                    "user's query and return their IDs using the return_matching_deals tool. "
+                    "Match intelligently on company name, deal type (bid/offer), structure "
+                    "(direct/fund/forward), price ranges, ticket sizes, management fee, carry, "
+                    "stage, data room availability, highlighted status, and any other relevant "
+                    "fields present in the data. If the query is broad or ambiguous, err on the "
+                    "side of including possibly relevant deals. Use the exact 'id' field from each "
+                    "deal as it appears in the data."
+                ),
             },
-        }
-    ]
+            {
+                "type": "text",
+                "text": "DEALS DATA (JSON):\n" + deals_json,
+                "cache_control": {"type": "ephemeral"},
+            },
+        ],
+        "tools": [
+            {
+                "name": "return_matching_deals",
+                "description": "Return the list of deal IDs that match the user's query.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "deal_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Array of matching deal IDs. Use the exact 'id' field from each deal.",
+                        }
+                    },
+                    "required": ["deal_ids"],
+                },
+            }
+        ],
+        "tool_choice": {"type": "tool", "name": "return_matching_deals"},
+        "messages": [{"role": "user", "content": query}],
+    }
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=4096,
-        system=system_blocks,
-        tools=tools,
-        tool_choice={"type": "tool", "name": "return_matching_deals"},
-        messages=[{"role": "user", "content": query}],
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=json.dumps(payload).encode('utf-8'),
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        method="POST",
     )
 
-    if hasattr(response, 'usage'):
-        logger.info(
-            "Claude search usage: input=%s cache_read=%s cache_create=%s output=%s",
-            getattr(response.usage, 'input_tokens', None),
-            getattr(response.usage, 'cache_read_input_tokens', None),
-            getattr(response.usage, 'cache_creation_input_tokens', None),
-            getattr(response.usage, 'output_tokens', None),
-        )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            response_body = resp.read().decode('utf-8')
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8', errors='replace')
+        logger.error(f"Anthropic API HTTP {e.code}: {error_body}")
+        raise RuntimeError(f"Anthropic API returned HTTP {e.code}: {error_body}") from e
+    except urllib.error.URLError as e:
+        logger.error(f"Anthropic API connection error: {e.reason}")
+        raise RuntimeError(f"Anthropic API connection error: {e.reason}") from e
 
-    for block in response.content:
-        if getattr(block, 'type', None) == 'tool_use' and getattr(block, 'name', None) == 'return_matching_deals':
-            raw_ids = (block.input or {}).get('deal_ids', [])
+    try:
+        result = json.loads(response_body)
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON from Anthropic API: {response_body[:500]}")
+        raise RuntimeError("Invalid JSON response from Anthropic API") from e
+
+    usage = result.get('usage') or {}
+    logger.info(
+        "Claude search usage: input=%s cache_read=%s cache_create=%s output=%s",
+        usage.get('input_tokens'),
+        usage.get('cache_read_input_tokens'),
+        usage.get('cache_creation_input_tokens'),
+        usage.get('output_tokens'),
+    )
+
+    for block in result.get('content') or []:
+        if block.get('type') == 'tool_use' and block.get('name') == 'return_matching_deals':
+            raw_ids = (block.get('input') or {}).get('deal_ids') or []
             return [str(d) for d in raw_ids]
 
     return []
