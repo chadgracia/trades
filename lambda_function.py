@@ -39,6 +39,17 @@ def _load_deals_from_s3():
     return json.loads(response['Body'].read().decode('utf-8'))
 
 
+# Fields kept when projecting deals for the search prompt. Everything else
+# in the S3 JSON (name, email, source, age_in_stage, updated, nexus,
+# company_lr_pps, company_lr_val, structure_class, …) is dropped to keep
+# the cached prompt prefix small and cheap.
+_SEARCH_FIELDS = (
+    'id', 'company', 'type', 'structure', 'carry', 'management_fee',
+    'min_deal_size', 'max_deal_size', 'stage', 'highlighted', 'data_room',
+    'net', 'gross',
+)
+
+
 def _call_claude_for_matching_ids(query, deals):
     """Ask Claude which deal IDs match the user's natural-language query.
 
@@ -51,8 +62,16 @@ def _call_claude_for_matching_ids(query, deals):
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY environment variable is not set")
 
+    # Project each deal to just the search-relevant fields before serializing.
+    # This drops all the unused fields (name, email, source, age_in_stage,
+    # updated, nexus, company_lr_pps, company_lr_val, structure_class, …)
+    # and dramatically reduces the input token count on every search.
     # sort_keys makes serialization deterministic so the cached prefix is stable.
-    deals_json = json.dumps(deals, sort_keys=True, default=str)
+    projected_deals = [
+        {k: d[k] for k in _SEARCH_FIELDS if k in d}
+        for d in deals
+    ]
+    deals_json = json.dumps(projected_deals, sort_keys=True, default=str)
 
     payload = {
         "model": "claude-haiku-4-5-20251001",
@@ -89,7 +108,7 @@ def _call_claude_for_matching_ids(query, deals):
                     "- carry: Carry percentage (0 means no carry).\n"
                     "- management_fee: Management fee percentage (0 means no management fee).\n"
                     "- Secondary fields you may use ONLY when explicitly referenced in the query: "
-                    "stage, data_room, highlighted, net, gross, company_lr_pps, company_lr_val.\n"
+                    "stage, data_room, highlighted, net, gross.\n"
                     "\n"
                     "SEMANTIC RULES:\n"
                     "- 'single layer', 'no SPV', 'no wrapper', 'no fund', 'direct access' → "
