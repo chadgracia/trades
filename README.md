@@ -1,0 +1,2 @@
+# trades
+Public indications page
