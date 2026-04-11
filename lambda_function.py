@@ -79,6 +79,11 @@ def _call_claude_for_matching_ids(query, deals):
         "system": [
             {
                 "type": "text",
+                "text": "DEALS DATA (JSON):\n" + deals_json,
+                "cache_control": {"type": "ephemeral"},
+            },
+            {
+                "type": "text",
                 "text": (
                     "You are a precise, strict search assistant for a private secondary market "
                     "deals platform. You will receive the full deals data as JSON and a natural-"
@@ -144,11 +149,6 @@ def _call_claude_for_matching_ids(query, deals):
                     "participation).\n"
                     "- 'deals over $X', 'at least $X ticket', '≥ $X' → min_deal_size >= X.\n"
                 ),
-            },
-            {
-                "type": "text",
-                "text": "DEALS DATA (JSON):\n" + deals_json,
-                "cache_control": {"type": "ephemeral"},
             },
         ],
         "tools": [
