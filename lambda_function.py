@@ -55,7 +55,7 @@ def _call_claude_for_matching_ids(query, deals):
     deals_json = json.dumps(deals, sort_keys=True, default=str)
 
     payload = {
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-haiku-4-5-20251001",
         "max_tokens": 4096,
         "system": [
             {
