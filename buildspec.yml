@@ -1,0 +1,14 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+  build:
+    commands:
+      - pip install -r requirements.txt -t ./package && cp lambda_function.py ./package/ && cd package && zip -r ../function.zip . && mv ../function.zip .
+
+artifacts:
+  files:
+    - package/function.zip
+  discard-paths: yes
