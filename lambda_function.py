@@ -226,6 +226,28 @@ def lambda_handler(event, context):
     if http_method == 'POST':
         return _handle_search_post(event)
 
+    # If we're returning from Cognito with ?code=<auth_code> in the query
+    # string, set the auth cookie and 302 back to the clean URL so reloads
+    # don't keep the code in the address bar (and the auth modal stays
+    # suppressed on subsequent visits via the cookie the client-side JS
+    # already checks).
+    query_params = event.get('queryStringParameters') or {}
+    if query_params.get('code'):
+        clean_path = (
+            event.get('rawPath')
+            or (event.get('requestContext') or {}).get('http', {}).get('path')
+            or '/'
+        )
+        logger.info("Cognito auth code received; redirecting to clean URL %s", clean_path)
+        return {
+            'statusCode': 302,
+            'headers': {
+                'Location': clean_path,
+                'Set-Cookie': 'CognitoIdentityServiceProvider=1; Max-Age=2592000; Path=/; Secure; SameSite=Lax',
+            },
+            'body': '',
+        }
+
     # GET path: render the HTML dashboard as before.
     try:
         deals = _load_deals_from_s3()
