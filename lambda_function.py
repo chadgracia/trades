@@ -39,136 +39,116 @@ def _load_deals_from_s3():
     return json.loads(response['Body'].read().decode('utf-8'))
 
 
-# Fields kept when projecting deals for the search prompt. Everything else
-# in the S3 JSON (name, email, source, age_in_stage, updated, nexus,
-# company_lr_pps, company_lr_val, structure_class, …) is dropped to keep
-# the cached prompt prefix small and cheap.
-_SEARCH_FIELDS = (
-    'id', 'company', 'type', 'structure', 'carry', 'management_fee',
-    'min_deal_size', 'max_deal_size', 'stage', 'highlighted', 'data_room',
-    'net', 'gross',
-)
-
-
 def _call_claude_for_matching_ids(query, deals):
-    """Ask Claude which deal IDs match the user's natural-language query.
+    """Return deal IDs matching the user's natural-language query.
 
-    POSTs directly to https://api.anthropic.com/v1/messages with urllib.request
-    (stdlib, always available in Lambda — no external dependencies). Uses
-    tool_use with a forced tool_choice for structured output, and prompt
-    caching on the deals payload so repeated queries reuse the cached prefix.
+    Two-step pipeline:
+      1. Ask Claude to parse the query into a structured filter object. Only
+         the query text is sent to Claude — the deals data is never in the
+         model's context, which makes the request tiny (< 1K tokens total)
+         and keeps the filter step deterministic.
+      2. Apply those filters in pure Python against the full deals list.
     """
+    filters = _extract_filters_from_query(query)
+    logger.info("Extracted filters for query %r: %s", query, filters)
+    return _apply_filters(deals, filters)
+
+
+def _extract_filters_from_query(query):
+    """Step 1: call Claude with ONLY the user's query (no deals data) and
+    have it return a structured filter object via forced tool_use."""
     api_key = os.environ.get('ANTHROPIC_API_KEY')
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY environment variable is not set")
 
-    # Project each deal to just the search-relevant fields before serializing.
-    # This drops all the unused fields (name, email, source, age_in_stage,
-    # updated, nexus, company_lr_pps, company_lr_val, structure_class, …)
-    # and dramatically reduces the input token count on every search.
-    # sort_keys makes serialization deterministic so the cached prefix is stable.
-    projected_deals = [
-        {k: d[k] for k in _SEARCH_FIELDS if k in d}
-        for d in deals
-    ]
-    deals_json = json.dumps(projected_deals, sort_keys=True, default=str)
-
     payload = {
         "model": "claude-haiku-4-5-20251001",
-        "max_tokens": 4096,
-        "system": [
-            {
-                "type": "text",
-                "text": "DEALS DATA (JSON):\n" + deals_json,
-                "cache_control": {"type": "ephemeral"},
-            },
-            {
-                "type": "text",
-                "text": (
-                    "You are a precise, strict search assistant for a private secondary market "
-                    "deals platform. You will receive the full deals data as JSON and a natural-"
-                    "language query from the user. Return the IDs of deals that match ALL of the "
-                    "user's criteria using the return_matching_deals tool. Use the exact 'id' "
-                    "field from each deal as it appears in the data.\n"
-                    "\n"
-                    "HARD FILTERS — ZERO TOLERANCE (these are not suggestions, they are absolute):\n"
-                    "- COMPANY: If the user names a specific company, ONLY return deals where the "
-                    "'company' field exactly matches that company name (case-insensitive). Zero "
-                    "tolerance — no other companies, no fuzzy matches across company names, no "
-                    "'similar' or 'related' companies. If the user asks for SpaceX, you return "
-                    "SpaceX deals and NOTHING else. If no deal matches the named company, return "
-                    "an empty array.\n"
-                    "- SELL SIDE: If the user says 'offers', 'offer', 'sell', 'selling', 'seller', "
-                    "'ask', or 'sell order', return ONLY deals where type == 'Sell Order'. "
-                    "Exclude every 'Buy Order' deal, no exceptions.\n"
-                    "- BUY SIDE: If the user says 'bids', 'bid', 'buy', 'buying', 'buyer', or "
-                    "'buy order', return ONLY deals where type == 'Buy Order'. Exclude every "
-                    "'Sell Order' deal, no exceptions.\n"
-                    "- These are hard filters, not suggestions. Violating any of them is a bug. "
-                    "Apply them before considering any other criterion.\n"
-                    "\n"
-                    "CRITICAL — STRICT MATCHING:\n"
-                    "- Return ONLY deals that match EVERY criterion the user stated. Exclude "
-                    "deals that match only some of the criteria.\n"
-                    "- Prefer precision over recall. It is much better to return too few results "
-                    "than too many. If nothing strictly matches, return an empty array.\n"
-                    "- If the query does not mention a given dimension, do not filter by it — "
-                    "but never loosen a dimension that IS mentioned.\n"
-                    "\n"
-                    "FIELD MAPPING — use these exact field names from each deal object:\n"
-                    "- company: Company name (e.g., 'SpaceX', 'Stripe'). Match case-insensitively "
-                    "and allow common aliases (e.g., 'Space X' → 'SpaceX').\n"
-                    "- structure: One of 'Direct', 'Fund', or 'Forward'. 'Direct' means the buyer "
-                    "is directly on the cap table with no wrapper or SPV. 'Fund' means the deal "
-                    "is held through an SPV / fund wrapper. 'Forward' means a forward contract.\n"
-                    "- type: One of 'Buy Order' or 'Sell Order'. 'Buy Order' is a bid (counterparty "
-                    "wants to buy). 'Sell Order' is an offer/ask (counterparty wants to sell).\n"
-                    "- min_deal_size: Minimum ticket size in USD (the smallest amount a counterparty "
-                    "can participate with).\n"
-                    "- max_deal_size: Maximum ticket size in USD.\n"
-                    "- carry: Carry percentage (0 means no carry).\n"
-                    "- management_fee: Management fee percentage (0 means no management fee).\n"
-                    "- Secondary fields you may use ONLY when explicitly referenced in the query: "
-                    "stage, data_room, highlighted, net, gross.\n"
-                    "\n"
-                    "SEMANTIC RULES:\n"
-                    "- 'single layer', 'no SPV', 'no wrapper', 'no fund', 'direct access' → "
-                    "structure == 'Direct' (NOT 'Fund', NOT 'Forward').\n"
-                    "- 'SPV', 'fund wrapper', 'through a fund' → structure == 'Fund'.\n"
-                    "- 'forward', 'forward contract' → structure == 'Forward'.\n"
-                    "- 'bid', 'bids', 'bidder', 'buyer', 'buying', 'want to buy', 'buy order' → "
-                    "type == 'Buy Order'.\n"
-                    "- 'offer', 'offers', 'ask', 'seller', 'selling', 'want to sell', 'sell order' → "
-                    "type == 'Sell Order'.\n"
-                    "- 'no fees', 'fee-free', 'zero fees' → carry == 0 AND management_fee == 0.\n"
-                    "- 'no carry', 'zero carry' → carry == 0.\n"
-                    "- 'no management fee', 'no mgmt fee', 'zero management fee' → "
-                    "management_fee == 0.\n"
-                    "- 'I have $X', 'deals I can do with $X', 'ticket under $X', '≤ $X' → "
-                    "min_deal_size <= X (the user's budget must be at least the deal's minimum "
-                    "participation).\n"
-                    "- 'deals over $X', 'at least $X ticket', '≥ $X' → min_deal_size >= X.\n"
-                ),
-            },
-        ],
+        "max_tokens": 1024,
+        "system": (
+            "You convert natural-language queries about private secondary market "
+            "deals into a structured filter object. You will be given a user's "
+            "query and must call the extract_filters tool with the appropriate "
+            "field values. Every field is optional — OMIT any field the user "
+            "did not explicitly specify. Do not guess or infer unmentioned "
+            "dimensions.\n"
+            "\n"
+            "FIELD GUIDE:\n"
+            "- company: Company name, normalized to the standard form. Examples: "
+            "'Space X' / 'spacex' -> 'SpaceX'. 'stripe' -> 'Stripe'. Only set "
+            "this if the user named a specific company.\n"
+            "- type: 'Buy Order' if the user asked about bids / buys / buying / "
+            "buyers / bidders. 'Sell Order' if the user asked about offers / "
+            "asks / sells / selling / sellers. Otherwise omit.\n"
+            "- structure: 'Direct' for direct / no SPV / no wrapper / single "
+            "layer / cap-table. 'Fund' for SPV / fund / wrapper. 'Forward' for "
+            "forward contracts. Otherwise omit.\n"
+            "- min_size_max: Maximum acceptable value of a deal's min_deal_size "
+            "(the smallest ticket the deal requires). 'I have $500K' or 'deals "
+            "I can do with $500K' or 'ticket under $500K' -> 500000. The user's "
+            "budget must be >= the deal's minimum to participate.\n"
+            "- carry_max: Maximum carry percentage. 'no carry' / 'zero carry' -> "
+            "0. 'low carry' -> 10. 'carry under 15%' -> 15.\n"
+            "- management_fee_max: Maximum management fee percentage. 'no "
+            "management fee' / 'no mgmt fee' -> 0. 'low mgmt fee' -> 1.\n"
+            "- gross_max: Maximum gross price per share in USD. 'gross under "
+            "$100' -> 100.\n"
+            "- gross_min: Minimum gross price per share in USD. 'gross over "
+            "$50' -> 50.\n"
+            "\n"
+            "Only fill fields the user explicitly specified. Leave everything "
+            "else out of the tool call."
+        ),
         "tools": [
             {
-                "name": "return_matching_deals",
-                "description": "Return the list of deal IDs that match the user's query.",
+                "name": "extract_filters",
+                "description": (
+                    "Record the structured filter values parsed from the user's "
+                    "query. Only include fields the user explicitly specified — "
+                    "omit all others."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "deal_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Array of matching deal IDs. Use the exact 'id' field from each deal.",
-                        }
+                        "company": {
+                            "type": "string",
+                            "description": "Company name in standard form, e.g. 'SpaceX'.",
+                        },
+                        "type": {
+                            "type": "string",
+                            "enum": ["Buy Order", "Sell Order"],
+                            "description": "'Buy Order' for bids, 'Sell Order' for offers.",
+                        },
+                        "structure": {
+                            "type": "string",
+                            "enum": ["Direct", "Fund", "Forward"],
+                            "description": "'Direct' = no wrapper, 'Fund' = SPV, 'Forward' = forward contract.",
+                        },
+                        "min_size_max": {
+                            "type": "number",
+                            "description": "Max acceptable min_deal_size in USD. e.g. 'I have $500K' -> 500000.",
+                        },
+                        "carry_max": {
+                            "type": "number",
+                            "description": "Max carry percentage. 'no carry' -> 0, 'low carry' -> 10.",
+                        },
+                        "management_fee_max": {
+                            "type": "number",
+                            "description": "Max management fee percentage. 'no mgmt fee' -> 0.",
+                        },
+                        "gross_max": {
+                            "type": "number",
+                            "description": "Max gross price per share in USD.",
+                        },
+                        "gross_min": {
+                            "type": "number",
+                            "description": "Min gross price per share in USD.",
+                        },
                     },
-                    "required": ["deal_ids"],
+                    "required": [],
                 },
             }
         ],
-        "tool_choice": {"type": "tool", "name": "return_matching_deals"},
+        "tool_choice": {"type": "tool", "name": "extract_filters"},
         "messages": [{"role": "user", "content": query}],
     }
 
@@ -202,7 +182,7 @@ def _call_claude_for_matching_ids(query, deals):
 
     usage = result.get('usage') or {}
     logger.info(
-        "Claude search usage: input=%s cache_read=%s cache_create=%s output=%s",
+        "Claude filter extraction usage: input=%s cache_read=%s cache_create=%s output=%s",
         usage.get('input_tokens'),
         usage.get('cache_read_input_tokens'),
         usage.get('cache_creation_input_tokens'),
@@ -210,11 +190,86 @@ def _call_claude_for_matching_ids(query, deals):
     )
 
     for block in result.get('content') or []:
-        if block.get('type') == 'tool_use' and block.get('name') == 'return_matching_deals':
-            raw_ids = (block.get('input') or {}).get('deal_ids') or []
-            return [str(d) for d in raw_ids]
+        if block.get('type') == 'tool_use' and block.get('name') == 'extract_filters':
+            return block.get('input') or {}
 
-    return []
+    return {}
+
+
+def _to_float(value):
+    """Best-effort numeric coercion; returns None if the value can't be
+    parsed as a float (None, empty string, non-numeric text, etc)."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _apply_filters(deals, filters):
+    """Step 2: apply a structured filter dict to the full deals list and
+    return the IDs of deals that match every non-null criterion. Missing /
+    null fields in the filter dict are treated as 'no filter on this
+    dimension'."""
+    company = filters.get('company')
+    if isinstance(company, str):
+        company = company.strip().lower() or None
+    else:
+        company = None
+
+    deal_type = filters.get('type')
+    structure = filters.get('structure')
+    min_size_max = filters.get('min_size_max')
+    carry_max = filters.get('carry_max')
+    management_fee_max = filters.get('management_fee_max')
+    gross_max = filters.get('gross_max')
+    gross_min = filters.get('gross_min')
+
+    matched = []
+    for deal in deals:
+        if company is not None:
+            if (deal.get('company') or '').strip().lower() != company:
+                continue
+
+        if deal_type is not None:
+            if (deal.get('type') or '').strip() != deal_type:
+                continue
+
+        if structure is not None:
+            if (deal.get('structure') or '').strip() != structure:
+                continue
+
+        if min_size_max is not None:
+            deal_min_size = _to_float(deal.get('min_deal_size'))
+            if deal_min_size is None or deal_min_size > min_size_max:
+                continue
+
+        if carry_max is not None:
+            deal_carry = _to_float(deal.get('carry'))
+            if deal_carry is None or deal_carry > carry_max:
+                continue
+
+        if management_fee_max is not None:
+            deal_fee = _to_float(deal.get('management_fee'))
+            if deal_fee is None or deal_fee > management_fee_max:
+                continue
+
+        if gross_max is not None:
+            deal_gross = _to_float(deal.get('gross'))
+            if deal_gross is None or deal_gross > gross_max:
+                continue
+
+        if gross_min is not None:
+            deal_gross = _to_float(deal.get('gross'))
+            if deal_gross is None or deal_gross < gross_min:
+                continue
+
+        deal_id = deal.get('id')
+        if deal_id is not None:
+            matched.append(str(deal_id))
+
+    return matched
 
 
 def _json_response(status_code, payload):
