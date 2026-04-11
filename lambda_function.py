@@ -742,7 +742,7 @@ def lambda_handler(event, context):
                 statusEl.textContent = 'Searching...';
                 statusEl.style.color = '#666';
 
-                fetch(window.location.pathname + window.location.search, {{
+                fetch(window.location.href, {{
                     method: 'POST',
                     headers: {{'Content-Type': 'application/json'}},
                     body: JSON.stringify({{query: query}})
