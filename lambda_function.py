@@ -13,12 +13,23 @@ from datetime import datetime, timezone, timedelta
 
 
 def _get_http_method(event):
-    """Resolve the HTTP method from a Lambda Function URL or API Gateway event."""
+    """Resolve the HTTP method from a Lambda Function URL, API Gateway event,
+    or a raw invoke payload.
+
+    If the event is the raw POST body itself (a dict with a top-level 'query'
+    key and none of the standard HTTP framing fields), we treat it as a POST
+    search request — this supports direct Lambda invokes / integrations that
+    skip the HTTP wrapper entirely.
+    """
     rc = event.get('requestContext') or {}
     http = rc.get('http') or {}
     if http.get('method'):
         return http['method']
-    return event.get('httpMethod', 'GET')
+    if event.get('httpMethod'):
+        return event['httpMethod']
+    if isinstance(event, dict) and 'query' in event:
+        return 'POST'
+    return 'GET'
 
 
 def _load_deals_from_s3():
@@ -225,6 +236,13 @@ def lambda_handler(event, context):
     # Dispatch POST requests to the natural-language search handler.
     http_method = _get_http_method(event)
     if http_method == 'POST':
+        # Raw invoke payload: if the event IS the search body (has a
+        # top-level 'query' and no HTTP 'body' field), wrap it into a
+        # synthetic API-Gateway-style body so _handle_search_post can
+        # parse it uniformly.
+        if 'body' not in event and 'query' in event:
+            synthetic = {'body': json.dumps({'query': event.get('query')})}
+            return _handle_search_post(synthetic)
         return _handle_search_post(event)
 
     # If we're returning from Cognito with ?code=<auth_code> in the query
