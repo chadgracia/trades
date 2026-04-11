@@ -242,7 +242,16 @@ def lambda_handler(event, context):
         # parse it uniformly.
         if 'body' not in event and 'query' in event:
             synthetic = {'body': json.dumps({'query': event.get('query')})}
-            return _handle_search_post(synthetic)
+            wrapped = _handle_search_post(synthetic)
+            # Raw-invoke callers (e.g. API Gateway non-proxy integration)
+            # expect just the JSON payload, not the {statusCode, headers,
+            # body} wrapper — they'll build the HTTP response themselves.
+            # Parse the body back out and return it directly. Fall back to
+            # the wrapper if anything unexpected happens.
+            try:
+                return json.loads(wrapped.get('body') or 'null')
+            except (AttributeError, TypeError, json.JSONDecodeError):
+                return wrapped
         return _handle_search_post(event)
 
     # If we're returning from Cognito with ?code=<auth_code> in the query
