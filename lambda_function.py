@@ -1,4 +1,6 @@
 import json
+import os
+import base64
 import boto3
 import logging
 
@@ -6,6 +8,149 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 from datetime import datetime, timezone, timedelta
+
+
+def _get_http_method(event):
+    """Resolve the HTTP method from a Lambda Function URL or API Gateway event."""
+    rc = event.get('requestContext') or {}
+    http = rc.get('http') or {}
+    if http.get('method'):
+        return http['method']
+    return event.get('httpMethod', 'GET')
+
+
+def _load_deals_from_s3():
+    """Read pipeline_deals.json from S3 and return the parsed list."""
+    s3 = boto3.client('s3')
+    response = s3.get_object(Bucket='pipeline-public-deal-data', Key='pipeline_deals.json')
+    return json.loads(response['Body'].read().decode('utf-8'))
+
+
+def _call_claude_for_matching_ids(query, deals):
+    """Ask Claude which deal IDs match the user's natural-language query.
+
+    Uses tool_use with a forced tool_choice for structured output, and prompt
+    caching on the deals payload so repeated queries reuse the cached prefix.
+    """
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY environment variable is not set")
+
+    # Lazy import so the GET path never requires the anthropic package.
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    # sort_keys makes serialization deterministic so the cached prefix is stable.
+    deals_json = json.dumps(deals, sort_keys=True, default=str)
+
+    system_blocks = [
+        {
+            "type": "text",
+            "text": (
+                "You are a search assistant for a private secondary market deals platform. "
+                "The user will ask a question in natural language about a list of deals, and "
+                "you will be given the full deals data as JSON. Identify which deals match the "
+                "user's query and return their IDs using the return_matching_deals tool. "
+                "Match intelligently on company name, deal type (bid/offer), structure "
+                "(direct/fund/forward), price ranges, ticket sizes, management fee, carry, "
+                "stage, data room availability, highlighted status, and any other relevant "
+                "fields present in the data. If the query is broad or ambiguous, err on the "
+                "side of including possibly relevant deals. Use the exact 'id' field from each "
+                "deal as it appears in the data."
+            ),
+        },
+        {
+            "type": "text",
+            "text": "DEALS DATA (JSON):\n" + deals_json,
+            "cache_control": {"type": "ephemeral"},
+        },
+    ]
+
+    tools = [
+        {
+            "name": "return_matching_deals",
+            "description": "Return the list of deal IDs that match the user's query.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "deal_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of matching deal IDs. Use the exact 'id' field from each deal.",
+                    }
+                },
+                "required": ["deal_ids"],
+            },
+        }
+    ]
+
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=4096,
+        system=system_blocks,
+        tools=tools,
+        tool_choice={"type": "tool", "name": "return_matching_deals"},
+        messages=[{"role": "user", "content": query}],
+    )
+
+    if hasattr(response, 'usage'):
+        logger.info(
+            "Claude search usage: input=%s cache_read=%s cache_create=%s output=%s",
+            getattr(response.usage, 'input_tokens', None),
+            getattr(response.usage, 'cache_read_input_tokens', None),
+            getattr(response.usage, 'cache_creation_input_tokens', None),
+            getattr(response.usage, 'output_tokens', None),
+        )
+
+    for block in response.content:
+        if getattr(block, 'type', None) == 'tool_use' and getattr(block, 'name', None) == 'return_matching_deals':
+            raw_ids = (block.input or {}).get('deal_ids', [])
+            return [str(d) for d in raw_ids]
+
+    return []
+
+
+def _json_response(status_code, payload):
+    return {
+        'statusCode': status_code,
+        'headers': {'Content-Type': 'application/json'},
+        'body': json.dumps(payload),
+    }
+
+
+def _handle_search_post(event):
+    """POST handler: run a natural-language deal search and return matching IDs."""
+    body = event.get('body') or ''
+    if event.get('isBase64Encoded'):
+        try:
+            body = base64.b64decode(body).decode('utf-8')
+        except Exception as e:
+            logger.error(f"Error decoding base64 body: {str(e)}")
+            return _json_response(400, {'error': 'Invalid base64 body'})
+
+    try:
+        data = json.loads(body) if body else {}
+    except Exception:
+        return _json_response(400, {'error': 'Invalid JSON body'})
+
+    query = (data.get('query') or '').strip()
+    if not query:
+        return _json_response(400, {'error': 'Missing or empty query'})
+
+    try:
+        deals = _load_deals_from_s3()
+    except Exception as e:
+        logger.error(f"Error reading data from S3: {str(e)}")
+        return _json_response(500, {'error': f'Failed to load deals: {str(e)}'})
+
+    try:
+        matched_ids = _call_claude_for_matching_ids(query, deals)
+    except Exception as e:
+        logger.error(f"Error calling Claude API: {str(e)}")
+        return _json_response(500, {'error': f'Search failed: {str(e)}'})
+
+    return _json_response(200, {'deal_ids': matched_ids, 'count': len(matched_ids)})
 
 def get_last_updated_date(deal):
     """Returns the last updated date in 'MMM D, YYYY' format or '30d+' if older than 30 days."""
@@ -52,16 +197,15 @@ def format_valuation(valuation):
 
 def lambda_handler(event, context):
     logger.info("Lambda function started")
-    
 
-    # Read data from S3
-    s3 = boto3.client('s3')
-    bucket_name = 'pipeline-public-deal-data'
-    file_name = 'pipeline_deals.json'
+    # Dispatch POST requests to the natural-language search handler.
+    http_method = _get_http_method(event)
+    if http_method == 'POST':
+        return _handle_search_post(event)
 
+    # GET path: render the HTML dashboard as before.
     try:
-        response = s3.get_object(Bucket=bucket_name, Key=file_name)
-        deals = json.loads(response['Body'].read().decode('utf-8'))
+        deals = _load_deals_from_s3()
     except Exception as e:
         logger.error(f"Error reading data from S3: {str(e)}")
         return {
@@ -114,7 +258,7 @@ def lambda_handler(event, context):
 
 
         table_rows += f"""
-        <tr class="deal-row {deal['type'].lower()} {deal['structure_class']}" data-management-fee="{deal['management_fee']}" data-carry="{deal['carry']}" data-stage="{deal['stage']}" data-data-room="{deal['data_room']}" data-highlighted="{deal['highlighted']}">
+        <tr class="deal-row {deal['type'].lower()} {deal['structure_class']}" data-deal-id="{deal['id']}" data-management-fee="{deal['management_fee']}" data-carry="{deal['carry']}" data-stage="{deal['stage']}" data-data-room="{deal['data_room']}" data-highlighted="{deal['highlighted']}">
             <td><a href="https://trades.graciagroup.com/deal/{deal['id']}">{deal['id']}</a></td>
             <td>{deal['type']}</td>
             <td>{company_cell}</td>
@@ -496,10 +640,124 @@ def lambda_handler(event, context):
                 transform: translateY(0);
             }}
 
+            .nl-search-container {{
+                background-color: #f8f9fa;
+                padding: 15px 20px;
+                border-radius: 5px;
+                margin-bottom: 15px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }}
+            .nl-search-row {{
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }}
+            .nl-search-input {{
+                flex: 1;
+                padding: 10px 12px;
+                font-size: 14px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                font-family: inherit;
+            }}
+            .nl-search-input:focus {{
+                outline: none;
+                border-color: #3498db;
+            }}
+            .nl-search-btn, .nl-clear-btn {{
+                padding: 10px 18px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                transition: background-color 0.3s;
+                white-space: nowrap;
+            }}
+            .nl-search-btn {{
+                background-color: #3498db;
+                color: white;
+            }}
+            .nl-search-btn:hover:not(:disabled) {{
+                background-color: #2980b9;
+            }}
+            .nl-search-btn:disabled {{
+                background-color: #95a5a6;
+                cursor: not-allowed;
+            }}
+            .nl-clear-btn {{
+                background-color: #e74c3c;
+                color: white;
+                display: none;
+            }}
+            .nl-clear-btn:hover {{
+                background-color: #c0392b;
+            }}
+            .nl-search-status {{
+                margin-top: 8px;
+                font-size: 13px;
+                color: #666;
+                min-height: 18px;
+            }}
+
         </style>
         <!-- Core application scripts -->
         <script>
             var selectedCompanies = [];
+            var searchMatchedIds = null; // Set<string> of deal IDs, or null when no search is active
+
+            function performSearch() {{
+                var input = document.getElementById('nlSearchInput');
+                var query = input.value.trim();
+                if (!query) return;
+
+                var btn = document.getElementById('nlSearchBtn');
+                var clearBtn = document.getElementById('nlClearBtn');
+                var statusEl = document.getElementById('nlSearchStatus');
+
+                btn.disabled = true;
+                btn.textContent = 'Searching...';
+                statusEl.textContent = 'Searching...';
+                statusEl.style.color = '#666';
+
+                fetch(window.location.pathname + window.location.search, {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{query: query}})
+                }})
+                .then(function(r) {{
+                    return r.json().then(function(data) {{
+                        if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+                        return data;
+                    }});
+                }})
+                .then(function(data) {{
+                    if (!data || !Array.isArray(data.deal_ids)) {{
+                        throw new Error('Unexpected response from search');
+                    }}
+                    searchMatchedIds = new Set(data.deal_ids.map(String));
+                    clearBtn.style.display = 'inline-block';
+                    filterTable();
+                    var matchCount = searchMatchedIds.size;
+                    statusEl.textContent = matchCount + ' match' + (matchCount === 1 ? '' : 'es') + ' for: "' + query + '"';
+                    statusEl.style.color = '#2c3e50';
+                }})
+                .catch(function(err) {{
+                    statusEl.textContent = 'Search failed: ' + err.message;
+                    statusEl.style.color = '#c0392b';
+                }})
+                .finally(function() {{
+                    btn.disabled = false;
+                    btn.textContent = 'Search';
+                }});
+            }}
+
+            function clearSearch() {{
+                searchMatchedIds = null;
+                document.getElementById('nlSearchInput').value = '';
+                document.getElementById('nlClearBtn').style.display = 'none';
+                document.getElementById('nlSearchStatus').textContent = '';
+                filterTable();
+            }}
 
             function formatDollarAmount(amount) {{
                 if (amount >= 1000000) {{
@@ -591,7 +849,14 @@ def lambda_handler(event, context):
                     if (selectedCompanies.length > 0 && selectedCompanies.indexOf(company) === -1) {{
                         show = false;
                     }}
-                    
+
+                    if (searchMatchedIds !== null) {{
+                        var dealIdStr = row.getAttribute('data-deal-id');
+                        if (dealIdStr === null || !searchMatchedIds.has(dealIdStr)) {{
+                            show = false;
+                        }}
+                    }}
+
                     row.style.display = show ? '' : 'none';
                 }}
                 updateDealCount();
@@ -779,6 +1044,15 @@ def lambda_handler(event, context):
         <button class="btn" onclick="window.location.href='https://6dzzw7nvdqtulz3hrtux3ofr440jbjho.lambda-url.us-east-1.on.aws/'">Create Watchlist</button>
         <button class="btn" onclick="downloadPDF()">Download PDF</button>
         <button class="btn" onclick="location.reload()">Refresh</button>
+
+        <div class="nl-search-container">
+            <div class="nl-search-row">
+                <input type="text" id="nlSearchInput" class="nl-search-input" placeholder="Ask a question about the deals (e.g., 'SpaceX offers under $50M ticket size')" onkeydown="if(event.key==='Enter'){{performSearch()}}">
+                <button id="nlSearchBtn" class="nl-search-btn" onclick="performSearch()">Search</button>
+                <button id="nlClearBtn" class="nl-clear-btn" onclick="clearSearch()">Clear search</button>
+            </div>
+            <div id="nlSearchStatus" class="nl-search-status"></div>
+        </div>
 
         <div class="header">
             <h1>Indications for Accredited Investors <span id="dealCount" class="deal-count"></span></h1>
