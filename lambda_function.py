@@ -1440,6 +1440,7 @@ def lambda_handler(event, context):
         <button class="btn" onclick="downloadPDF()">Download PDF</button>
         <button class="btn" onclick="location.reload()">Refresh</button>
 
+        <p style="margin-bottom: 8px; font-size: 14px; color: #555;">What are you looking for today? Try <em>'single layer Anthropic offers'</em> or <em>'direct robotics deals'</em></p>
         <div class="nl-search-container">
             <div class="nl-search-row">
                 <input type="text" id="nlSearchInput" class="nl-search-input" placeholder="Ask a question about the deals (e.g., 'SpaceX offers under $50M ticket size')" onkeydown="if(event.key==='Enter'){{performSearch()}}">
