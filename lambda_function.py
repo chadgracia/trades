@@ -76,19 +76,14 @@ def _extract_filters_from_query(query):
             "- company: Company name, normalized to the standard form. Examples: "
             "'Space X' / 'spacex' -> 'SpaceX'. 'stripe' -> 'Stripe'. Only set "
             "this if the user named a specific company.\n"
-            "- companies: List of specific company names to match when the "
-            "user mentions an industry, sector, or theme (e.g. 'robotics', "
-            "'AI', 'fintech', 'defense', 'space', 'food & beverage'). Use "
-            "your general knowledge to map the theme to the most relevant "
-            "company names (e.g. 'robotics' -> ['Figure', 'Gecko Robotics', "
-            "'Anduril']; 'AI' -> ['OpenAI', 'Anthropic', 'xAI', "
-            "'Perplexity']). ONLY include companies that are still private "
-            "(pre-IPO). NEVER include publicly traded companies — for "
-            "example, Boston Dynamics is public, so exclude it. Only set "
-            "this when the user referenced a sector or theme — NOT when "
-            "they named a specific company (use the company field for "
-            "that). Each entry is matched as a case-insensitive substring "
-            "against deal company names.\n"
+            "- company_industry: A single broad sector/industry keyword when "
+            "the user mentions a theme (e.g. 'robotics', 'AI', 'drones', "
+            "'fintech', 'defense', 'space', 'healthcare'). Use one keyword "
+            "that is likely to appear in a company's industry tags. Only set "
+            "this when the user referenced a sector or theme — NOT when they "
+            "named a specific company (use the company field for that). "
+            "Matched as a case-insensitive substring against the deal's "
+            "company_industry field.\n"
             "- type: 'Buy Order' if the user asked about bids / buys / buying / "
             "buyers / bidders. 'Sell Order' if the user asked about offers / "
             "asks / sells / selling / sellers. Otherwise omit.\n"
@@ -150,17 +145,16 @@ def _extract_filters_from_query(query):
                             "type": "string",
                             "description": "Company name in standard form, e.g. 'SpaceX'.",
                         },
-                        "companies": {
-                            "type": "array",
-                            "items": {"type": "string"},
+                        "company_industry": {
+                            "type": "string",
                             "description": (
-                                "List of company names to match when the user "
-                                "mentions a sector/theme/industry (e.g. "
-                                "'robotics', 'AI', 'fintech'). Each entry is "
-                                "matched as a case-insensitive substring "
-                                "against deal company names. Do NOT set this "
-                                "when the user named a specific company; use "
-                                "'company' instead."
+                                "Single broad sector/industry keyword "
+                                "(e.g. 'robotics', 'AI', 'drones', "
+                                "'fintech'). Matched as a case-insensitive "
+                                "substring against the deal's "
+                                "company_industry field. Do NOT set this "
+                                "when the user named a specific company; "
+                                "use 'company' instead."
                             ),
                         },
                         "type": {
@@ -330,14 +324,11 @@ def _apply_filters(deals, filters):
     else:
         company = None
 
-    companies_raw = filters.get('companies')
-    if isinstance(companies_raw, list):
-        companies = [
-            c.strip().lower() for c in companies_raw
-            if isinstance(c, str) and c.strip()
-        ] or None
+    company_industry = filters.get('company_industry')
+    if isinstance(company_industry, str):
+        company_industry = company_industry.strip().lower() or None
     else:
-        companies = None
+        company_industry = None
 
     deal_type = filters.get('type')
     structure = filters.get('structure')
@@ -374,9 +365,8 @@ def _apply_filters(deals, filters):
             if company not in (deal.get('company') or '').strip().lower():
                 continue
 
-        if companies is not None:
-            deal_company_lower = (deal.get('company') or '').strip().lower()
-            if not any(c in deal_company_lower for c in companies):
+        if company_industry is not None:
+            if company_industry not in (deal.get('company_industry') or '').strip().lower():
                 continue
 
         if deal_type is not None:
