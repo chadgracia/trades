@@ -229,7 +229,7 @@ def _apply_filters(deals, filters):
     matched = []
     for deal in deals:
         if company is not None:
-            if (deal.get('company') or '').strip().lower() != company:
+            if company not in (deal.get('company') or '').strip().lower():
                 continue
 
         if deal_type is not None:
