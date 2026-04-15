@@ -94,6 +94,12 @@ def _extract_filters_from_query(query):
             "$100' -> 100.\n"
             "- gross_min: Minimum gross price per share in USD. 'gross over "
             "$50' -> 50.\n"
+            "- sort: Set ONLY when the user uses a clear superlative. "
+            "'gross_asc' for cheapest / lowest price. 'gross_desc' for most "
+            "expensive / highest price. 'min_deal_size_asc' for smallest "
+            "ticket / smallest minimum. 'max_deal_size_desc' for largest / "
+            "biggest deal. 'updated_desc' for most recent / newest / latest. "
+            "'carry_asc' for lowest carry / lowest fees. Omit otherwise.\n"
             "\n"
             "Only fill fields the user explicitly specified. Leave everything "
             "else out of the tool call."
@@ -142,6 +148,26 @@ def _extract_filters_from_query(query):
                         "gross_min": {
                             "type": "number",
                             "description": "Min gross price per share in USD.",
+                        },
+                        "sort": {
+                            "type": "string",
+                            "enum": [
+                                "gross_asc",
+                                "gross_desc",
+                                "min_deal_size_asc",
+                                "max_deal_size_desc",
+                                "updated_desc",
+                                "carry_asc",
+                            ],
+                            "description": (
+                                "Set only when the user uses a clear "
+                                "superlative. 'gross_asc' = cheapest, "
+                                "'gross_desc' = most expensive, "
+                                "'min_deal_size_asc' = smallest minimum, "
+                                "'max_deal_size_desc' = largest deal, "
+                                "'updated_desc' = most recent, "
+                                "'carry_asc' = lowest carry."
+                            ),
                         },
                     },
                     "required": [],
@@ -225,8 +251,10 @@ def _apply_filters(deals, filters):
     management_fee_max = filters.get('management_fee_max')
     gross_max = filters.get('gross_max')
     gross_min = filters.get('gross_min')
+    sort = filters.get('sort')
 
     matched = []
+    matched_deals = []
     for deal in deals:
         if company is not None:
             if company not in (deal.get('company') or '').strip().lower():
@@ -268,6 +296,38 @@ def _apply_filters(deals, filters):
         deal_id = deal.get('id')
         if deal_id is not None:
             matched.append(str(deal_id))
+            matched_deals.append(deal)
+
+    if sort and matched_deals:
+        sort_specs = {
+            'gross_asc': ('gross', False),
+            'gross_desc': ('gross', True),
+            'min_deal_size_asc': ('min_deal_size', False),
+            'max_deal_size_desc': ('max_deal_size', True),
+            'updated_desc': ('updated', True),
+            'carry_asc': ('carry', False),
+        }
+        spec = sort_specs.get(sort)
+        if spec is not None:
+            field, reverse = spec
+            # Push missing values to the end regardless of sort direction:
+            # ascending wants None to be "largest", descending wants it
+            # "smallest" (which becomes last after reverse).
+            if field == 'updated':
+                missing_sentinel = '' if reverse else '\uffff'
+                def _key(d):
+                    v = d.get(field)
+                    return v if v else missing_sentinel
+            else:
+                missing_sentinel = float('-inf') if reverse else float('inf')
+                def _key(d):
+                    v = _to_float(d.get(field))
+                    return missing_sentinel if v is None else v
+            matched_deals.sort(key=_key, reverse=reverse)
+            top_id = matched_deals[0].get('id')
+            if top_id is not None:
+                return [str(top_id)]
+            return []
 
     return matched
 
