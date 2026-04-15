@@ -76,6 +76,16 @@ def _extract_filters_from_query(query):
             "- company: Company name, normalized to the standard form. Examples: "
             "'Space X' / 'spacex' -> 'SpaceX'. 'stripe' -> 'Stripe'. Only set "
             "this if the user named a specific company.\n"
+            "- companies: List of specific company names to match when the "
+            "user mentions an industry, sector, or theme (e.g. 'robotics', "
+            "'AI', 'fintech', 'defense', 'space', 'food & beverage'). Use "
+            "your general knowledge to map the theme to the most relevant "
+            "company names (e.g. 'robotics' -> ['Boston Dynamics', 'Figure', "
+            "'Gecko Robotics', 'Anduril']; 'AI' -> ['OpenAI', 'Anthropic', "
+            "'xAI', 'Perplexity']). Only set this when the user referenced a "
+            "sector or theme — NOT when they named a specific company (use "
+            "the company field for that). Each entry is matched as a "
+            "case-insensitive substring against deal company names.\n"
             "- type: 'Buy Order' if the user asked about bids / buys / buying / "
             "buyers / bidders. 'Sell Order' if the user asked about offers / "
             "asks / sells / selling / sellers. Otherwise omit.\n"
@@ -136,6 +146,19 @@ def _extract_filters_from_query(query):
                         "company": {
                             "type": "string",
                             "description": "Company name in standard form, e.g. 'SpaceX'.",
+                        },
+                        "companies": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "List of company names to match when the user "
+                                "mentions a sector/theme/industry (e.g. "
+                                "'robotics', 'AI', 'fintech'). Each entry is "
+                                "matched as a case-insensitive substring "
+                                "against deal company names. Do NOT set this "
+                                "when the user named a specific company; use "
+                                "'company' instead."
+                            ),
                         },
                         "type": {
                             "type": "string",
@@ -304,6 +327,15 @@ def _apply_filters(deals, filters):
     else:
         company = None
 
+    companies_raw = filters.get('companies')
+    if isinstance(companies_raw, list):
+        companies = [
+            c.strip().lower() for c in companies_raw
+            if isinstance(c, str) and c.strip()
+        ] or None
+    else:
+        companies = None
+
     deal_type = filters.get('type')
     structure = filters.get('structure')
     min_size_max = filters.get('min_size_max')
@@ -337,6 +369,11 @@ def _apply_filters(deals, filters):
     for deal in deals:
         if company is not None:
             if company not in (deal.get('company') or '').strip().lower():
+                continue
+
+        if companies is not None:
+            deal_company_lower = (deal.get('company') or '').strip().lower()
+            if not any(c in deal_company_lower for c in companies):
                 continue
 
         if deal_type is not None:
