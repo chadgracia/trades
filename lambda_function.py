@@ -94,6 +94,24 @@ def _extract_filters_from_query(query):
             "$100' -> 100.\n"
             "- gross_min: Minimum gross price per share in USD. 'gross over "
             "$50' -> 50.\n"
+            "- series: Share series / round. Examples: 'series B' / 'B round' "
+            "-> 'B'. 'series A' -> 'A'. 'seed' / 'seed round' -> 'Seed'. "
+            "'mixed series' -> 'Mixed'. 'N/A' for deals with no series. Only "
+            "set this if the user named a specific series/round.\n"
+            "- class: Share class. 'common' / 'common shares' / 'common stock' "
+            "-> 'Common'. 'preferred' / 'preferred stock' -> 'Preferred'. "
+            "'mixed class' -> 'Mixed'. 'any class' -> 'Any'. Otherwise omit.\n"
+            "- layers: SPV structure layering. 'on cap table' / 'cap table' / "
+            "'single layer' -> 'SPV on cap table'. '2 layers' / 'two layer' / "
+            "'2-layer' -> '2-Layer SPV'. '3 layers' / 'three layer' / "
+            "'3-layer' -> '3-Layer SPV'. Otherwise omit.\n"
+            "- stage: Deal stage. 'firm' / 'firm only' / 'confirmed details' "
+            "-> 'Firm'. 'inquiry' / 'inquiries' -> 'Inquiry'. 'confirm' / "
+            "'will confirm' -> 'Confirm'. Otherwise omit.\n"
+            "- seller_fee_max: Max seller fee percentage. 'no seller fee' -> "
+            "0. 'low seller fee' -> 1. 'seller fee under 2%' -> 2.\n"
+            "- partner_fee_max: Max partner fee percentage. 'no partner fee' "
+            "-> 0. 'low partner fee' -> 1. 'partner fee under 2%' -> 2.\n"
             "- sort: Set ONLY when the user uses a clear superlative. "
             "'gross_asc' for cheapest / lowest price. 'gross_desc' for most "
             "expensive / highest price. 'min_deal_size_asc' for smallest "
@@ -148,6 +166,48 @@ def _extract_filters_from_query(query):
                         "gross_min": {
                             "type": "number",
                             "description": "Min gross price per share in USD.",
+                        },
+                        "series": {
+                            "type": "string",
+                            "description": (
+                                "Share series/round, e.g. 'A', 'B', 'C', "
+                                "'Seed', 'Mixed', 'N/A'. Matched as a "
+                                "case-insensitive substring."
+                            ),
+                        },
+                        "class": {
+                            "type": "string",
+                            "enum": ["Common", "Preferred", "Mixed", "Any"],
+                            "description": "Share class.",
+                        },
+                        "layers": {
+                            "type": "string",
+                            "enum": [
+                                "SPV on cap table",
+                                "2-Layer SPV",
+                                "3-Layer SPV",
+                            ],
+                            "description": (
+                                "SPV layering. Matched as a case-insensitive "
+                                "substring."
+                            ),
+                        },
+                        "stage": {
+                            "type": "string",
+                            "enum": ["Firm", "Inquiry", "Confirm"],
+                            "description": (
+                                "Deal stage. 'Firm' = details confirmed, "
+                                "'Inquiry' = awaiting data, 'Confirm' = will "
+                                "confirm after bid/ask."
+                            ),
+                        },
+                        "seller_fee_max": {
+                            "type": "number",
+                            "description": "Max seller fee percentage. 'no seller fee' -> 0.",
+                        },
+                        "partner_fee_max": {
+                            "type": "number",
+                            "description": "Max partner fee percentage. 'no partner fee' -> 0.",
                         },
                         "sort": {
                             "type": "string",
@@ -251,6 +311,25 @@ def _apply_filters(deals, filters):
     management_fee_max = filters.get('management_fee_max')
     gross_max = filters.get('gross_max')
     gross_min = filters.get('gross_min')
+
+    series = filters.get('series')
+    if isinstance(series, str):
+        series = series.strip().lower() or None
+    else:
+        series = None
+
+    share_class = filters.get('class')
+    stage = filters.get('stage')
+
+    layers = filters.get('layers')
+    if isinstance(layers, str):
+        layers = layers.strip().lower() or None
+    else:
+        layers = None
+
+    seller_fee_max = filters.get('seller_fee_max')
+    partner_fee_max = filters.get('partner_fee_max')
+
     sort = filters.get('sort')
 
     matched = []
@@ -291,6 +370,32 @@ def _apply_filters(deals, filters):
         if gross_min is not None:
             deal_gross = _to_float(deal.get('gross'))
             if deal_gross is None or deal_gross < gross_min:
+                continue
+
+        if series is not None:
+            if series not in (deal.get('series') or '').strip().lower():
+                continue
+
+        if share_class is not None:
+            if (deal.get('class') or '').strip() != share_class:
+                continue
+
+        if layers is not None:
+            if layers not in (deal.get('layers') or '').strip().lower():
+                continue
+
+        if stage is not None:
+            if (deal.get('stage') or '').strip() != stage:
+                continue
+
+        if seller_fee_max is not None:
+            deal_seller_fee = _to_float(deal.get('seller_fee'))
+            if deal_seller_fee is None or deal_seller_fee > seller_fee_max:
+                continue
+
+        if partner_fee_max is not None:
+            deal_partner_fee = _to_float(deal.get('partner_fee'))
+            if deal_partner_fee is None or deal_partner_fee > partner_fee_max:
                 continue
 
         deal_id = deal.get('id')
