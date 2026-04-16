@@ -302,6 +302,17 @@ def _extract_filters_from_query(query):
     return {}
 
 
+# Layer-hierarchy ordering used by _apply_filters. For Sell Orders a
+# request for more layers is satisfied by any offer at the same or
+# lower level (a seller on cap table / single-layer SPV can always be
+# wrapped into a deeper structure downstream).
+_LAYER_LEVELS = {
+    'spv on cap table': 1,
+    '2-layer spv': 2,
+    '3-layer spv': 3,
+}
+
+
 def _to_float(value):
     """Best-effort numeric coercion; returns None if the value can't be
     parsed as a float (None, empty string, non-numeric text, etc)."""
@@ -411,8 +422,26 @@ def _apply_filters(deals, filters):
                 continue
 
         if layers is not None:
-            if layers not in (deal.get('layers') or '').strip().lower():
-                continue
+            deal_layers_lower = (deal.get('layers') or '').strip().lower()
+            deal_type_value = (deal.get('type') or '').strip()
+            requested_level = _LAYER_LEVELS.get(layers)
+            deal_level = _LAYER_LEVELS.get(deal_layers_lower)
+
+            if (
+                deal_type_value == 'Sell Order'
+                and requested_level is not None
+                and deal_level is not None
+            ):
+                # Sell-side hierarchy: an offer at a lower layer count
+                # satisfies a request for a higher one (requesting
+                # '2-Layer SPV' also matches 'SPV on cap table').
+                if deal_level > requested_level:
+                    continue
+            else:
+                # Buy orders and unspecified/unmapped types: exact
+                # (case-insensitive substring) match.
+                if layers not in deal_layers_lower:
+                    continue
 
         if stage is not None:
             if (deal.get('stage') or '').strip() != stage:
