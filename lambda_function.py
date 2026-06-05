@@ -990,6 +990,7 @@ def lambda_handler(event, context):
                 align-items: center;
                 margin-right: 15px;
                 cursor: pointer;
+                white-space: nowrap;
             }}
             .checkbox-label input {{
                 margin-right: 5px;
@@ -1006,7 +1007,7 @@ def lambda_handler(event, context):
                 display: flex;
                 align-items: center;
                 gap: 15px;
-                width: 40%;
+                flex-shrink: 0;
                 border: 1px solid #ddd;
                 padding: 10px;
                 border-radius: 4px;
