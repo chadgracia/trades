@@ -1357,6 +1357,18 @@ def lambda_handler(event, context):
                 var dataRoomChecked = document.getElementById('dataRoomFilter').checked;
                 var highlightedChecked = document.getElementById('highlightedFilter').checked;
                 var brokerChecked = document.getElementById('brokerFilter').checked;
+
+                var ticketBuckets = [];
+                var ticketCheckboxes = document.getElementsByClassName('ticket-filter');
+                for (var t = 0; t < ticketCheckboxes.length; t++) {{
+                    if (ticketCheckboxes[t].checked) {{
+                        var hiAttr = ticketCheckboxes[t].getAttribute('data-hi');
+                        ticketBuckets.push({{
+                            lo: parseFloat(ticketCheckboxes[t].getAttribute('data-lo')) || 0,
+                            hi: (hiAttr === null || hiAttr === '') ? Infinity : parseFloat(hiAttr)
+                        }});
+                    }}
+                }}
                 
                 var rows = document.getElementsByClassName('deal-row');
                 
@@ -1382,9 +1394,18 @@ def lambda_handler(event, context):
                     var showFees = (managementFeeChecked || managementFee === 0) && (carryChecked || carry === 0);
                     var showUnconfirmed = true;  // unconfirmed orders always shown (auto-updated)
                     
-                    var minDealSize = parseFloat(row.cells[6].innerText.replace(/[^0-9.-]+/g,'')) || 0;
-                    var ticketSize = parseFloat(document.getElementById('ticketSlider').value);
-                    var showTicketSize = minDealSize <= ticketSize;
+                    var dealMin = parseFloat(row.cells[6].innerText.replace(/[^0-9.-]+/g,'')) || 0;
+                    var dealMax = parseFloat(row.cells[7].innerText.replace(/[^0-9.-]+/g,''));
+                    if (isNaN(dealMax) || dealMax <= 0) {{
+                        dealMax = Infinity;
+                    }}
+                    var showTicketSize = false;
+                    for (var b = 0; b < ticketBuckets.length; b++) {{
+                        if (dealMin < ticketBuckets[b].hi && dealMax >= ticketBuckets[b].lo) {{
+                            showTicketSize = true;
+                            break;
+                        }}
+                    }}
                     
                     var show = showType && showStructure && showFees && showUnconfirmed && 
                               showTicketSize && 
@@ -1437,13 +1458,6 @@ def lambda_handler(event, context):
                         }}
                     }}
 
-                    document.getElementById('sliderValue').textContent = formatDollarAmount(document.getElementById('ticketSlider').value);
-                    document.getElementById('ticketSlider').addEventListener('input', function () {{
-                        const value = this.value;
-                        document.getElementById('sliderValue').textContent = formatDollarAmount(parseFloat(value));
-                        filterTable();
-                        updateDealCount();
-                    }});
                     updateDealCount();
                 }});
         </script>
@@ -1485,14 +1499,7 @@ def lambda_handler(event, context):
                 if (structures.length > 0 && structures.length < 3) {{
                     filename += '-' + structures.join('-');
                 }}
-                
-                // Add ticket size to filename if not at max
-                const ticketSize = parseFloat(document.getElementById('ticketSlider').value);
-                if (ticketSize < 10000000) {{
-                    const ticketSizeInMillions = ticketSize / 1000000;
-                    filename += `-max${{ticketSizeInMillions}}M`;
-                }}
-                
+
                 // Add company filter if any
                 if (selectedCompanies.length > 0) {{
                     if (selectedCompanies.length <= 3) {{
@@ -1617,8 +1624,11 @@ def lambda_handler(event, context):
             <div class="filter-row">
                 <div class="slider-group">
                     <strong>My ticket size:</strong>
-                    <input type="range" id="ticketSlider" min="100000" max="10000000" step="100000" value="10000000">
-                    <span id="sliderValue">$10M</span>
+                    <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="0" data-hi="250000" checked onchange="filterTable()"> &lt;$250K</label>
+                    <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="250000" data-hi="500000" checked onchange="filterTable()"> $250K–$500K</label>
+                    <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="500000" data-hi="1000000" checked onchange="filterTable()"> $500K–$1M</label>
+                    <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="1000000" data-hi="5000000" checked onchange="filterTable()"> $1M–$5M</label>
+                    <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="5000000" data-hi="" checked onchange="filterTable()"> $5M+</label>
                 </div>
                 <div class="right-filters">
                     <div class="bottom-filter-group">
