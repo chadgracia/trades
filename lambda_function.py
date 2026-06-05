@@ -848,6 +848,7 @@ def lambda_handler(event, context):
                 padding: 20px;
             }}
             .header {{
+                display: block;  /* stack title above filters (override master.css flex) */
                 background-color: #f8f9fa;
                 padding: 10px 20px;
                 border-radius: 5px;
@@ -856,14 +857,21 @@ def lambda_handler(event, context):
             }}
             .filter-section {{
                 display: flex;
-                justify-content: space-between;
+                flex-wrap: wrap;
                 align-items: center;
+                gap: 10px 0;
                 margin-bottom: 10px;
             }}
             .filter-group {{
                 display: flex;
                 align-items: center;
-                
+                gap: 6px;
+                padding: 2px 22px;
+                border-left: 1px solid var(--border-strong, #cdc9c0);
+            }}
+            .filter-group:first-child {{
+                padding-left: 0;
+                border-left: none;
             }}
             .filter-label {{
                 font-weight: bold;
@@ -1346,7 +1354,6 @@ def lambda_handler(event, context):
                 var forwardChecked = document.getElementById('forwardFilter').checked;
                 var managementFeeChecked = document.getElementById('managementFeeFilter').checked;
                 var carryChecked = document.getElementById('carryFilter').checked;
-                var showUnconfirmedChecked = document.getElementById('showUnconfirmedFilter').checked;
                 var dataRoomChecked = document.getElementById('dataRoomFilter').checked;
                 var highlightedChecked = document.getElementById('highlightedFilter').checked;
                 var brokerChecked = document.getElementById('brokerFilter').checked;
@@ -1373,7 +1380,7 @@ def lambda_handler(event, context):
                     var showType = (buyChecked && type === 'buy') || (sellChecked && type === 'sell');
                     var showStructure = (directChecked && isDirect) || (spvChecked && isSPV) || (forwardChecked && isForward);
                     var showFees = (managementFeeChecked || managementFee === 0) && (carryChecked || carry === 0);
-                    var showUnconfirmed = showUnconfirmedChecked || stage !== 'Confirm';
+                    var showUnconfirmed = true;  // unconfirmed orders always shown (auto-updated)
                     
                     var minDealSize = parseFloat(row.cells[6].innerText.replace(/[^0-9.-]+/g,'')) || 0;
                     var ticketSize = parseFloat(document.getElementById('ticketSlider').value);
@@ -1604,10 +1611,6 @@ def lambda_handler(event, context):
                     <label class="checkbox-label"><input type="checkbox" id="managementFeeFilter" checked onchange="filterTable()"> Management</label>
                     <label class="checkbox-label"><input type="checkbox" id="carryFilter" checked onchange="filterTable()"> Carry</label>
                 </div>
-                <div class="filter-group">
-                    <label class="checkbox-label"><input type="checkbox" id="showUnconfirmedFilter" checked onchange="filterTable()"> Show Unconfirmed Orders</label>
-                </div>
-
             </div>
         </div>
         <div class="ticket-size-filter">
