@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import base64
 import hmac
 import hashlib
@@ -21,6 +22,7 @@ COGNITO_CLIENT_ID = "71vrglkidm13jb73u7nje3d1t2"
 COGNITO_REDIRECT_URI = "https://trades.graciagroup.com"
 COGNITO_CLIENT_SECRET = os.environ.get("COGNITO_CLIENT_SECRET", "")
 IDENTITY_SECRET = os.environ.get("IDENTITY_SECRET", "")
+PORTFOLIO_URL = "https://jtm2stbnfelfoabi3yvyvyqovu0wxahu.lambda-url.us-east-1.on.aws"
 
 
 def _exchange_code_for_email(code):
@@ -62,6 +64,63 @@ def _make_identity_cookie(email):
     sig = hmac.new(IDENTITY_SECRET.encode(), email.encode(), hashlib.sha256).hexdigest()
     val = base64.urlsafe_b64encode(f"{email}|{sig}".encode()).decode().rstrip("=")
     return f"gg_id={val}; Max-Age=2592000; Path=/; Secure; SameSite=Lax"
+
+
+def _get_cookie(event, name):
+    """Read a cookie value from a payload-v2 request, else None."""
+    for c in (event.get("cookies") or []):
+        if c.startswith(name + "="):
+            return c.split("=", 1)[1]
+    hdr = (event.get("headers") or {}).get("cookie", "")
+    for c in hdr.split(";"):
+        c = c.strip()
+        if c.startswith(name + "="):
+            return c.split("=", 1)[1]
+    return None
+
+
+def _read_identity_email(event):
+    """Verified email from the gg_id cookie, or None. Reverses _make_identity_cookie.
+    Never raises."""
+    if not IDENTITY_SECRET:
+        return None
+    raw = _get_cookie(event, "gg_id")
+    if not raw:
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode()
+        email, sig = decoded.rsplit("|", 1)
+        expected = hmac.new(IDENTITY_SECRET.encode(), email.encode(),
+                            hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            return None
+        return email
+    except Exception:
+        return None
+
+
+def _make_handoff_token(email):
+    """Short-lived signed handoff the portfolio app verifies:
+    base64url(f"{email}|{exp}|{sig}"), sig = HMAC-SHA256(IDENTITY_SECRET, f"{email}|{exp}")."""
+    exp = int(time.time()) + 3600
+    sig = hmac.new(IDENTITY_SECRET.encode(), f"{email}|{exp}".encode(),
+                   hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{email}|{exp}|{sig}".encode()).decode().rstrip("=")
+
+
+def _portfolio_button_html(event):
+    """The 'Your Portfolio' button HTML if a valid gg_id is present, else ''."""
+    email = _read_identity_email(event)
+    if not email:
+        return ""
+    token = _make_handoff_token(email)
+    href = f"{PORTFOLIO_URL}/?sso={urllib.parse.quote(token, safe='')}"
+    return (
+        f'<a href="{href}" target="_blank" rel="noopener" '
+        'style="display:inline-block;padding:8px 16px;border-radius:8px;'
+        'background:#1a73e8;color:#fff;font-weight:600;text-decoration:none;'
+        'font-size:14px;">Your Portfolio</a>'
+    )
 
 
 def _get_http_method(event):
@@ -768,6 +827,8 @@ def lambda_handler(event, context):
         for company in non_highlighted_companies
     ])
 
+
+    portfolio_btn = _portfolio_button_html(event)
 
     html_content = f"""
     <!DOCTYPE html>
@@ -1526,6 +1587,7 @@ def lambda_handler(event, context):
         <button class="btn" onclick="window.location.href='https://6dzzw7nvdqtulz3hrtux3ofr440jbjho.lambda-url.us-east-1.on.aws/'">Create Watchlist</button>
         <button class="btn" onclick="downloadPDF()">Download PDF</button>
         <button class="btn" onclick="location.reload()">Refresh</button>
+        {portfolio_btn}
 
         <p style="margin-bottom: 10px; font-size: 15px; color: #222; font-weight: 500;">What are you looking for today? Try <strong>&ldquo;single layer Anthropic offers&rdquo;</strong> or <strong>&ldquo;direct robotics deals&rdquo;</strong></p>
         <div class="nl-search-container">
