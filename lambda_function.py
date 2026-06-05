@@ -1360,7 +1360,6 @@ def lambda_handler(event, context):
                 var carryChecked = document.getElementById('carryFilter').checked;
                 var dataRoomChecked = document.getElementById('dataRoomFilter').checked;
                 var highlightedChecked = document.getElementById('highlightedFilter').checked;
-                var brokerChecked = document.getElementById('brokerFilter').checked;
 
                 var ticketBuckets = [];
                 var ticketCheckboxes = document.getElementsByClassName('ticket-filter');
@@ -1389,9 +1388,7 @@ def lambda_handler(event, context):
                     var hasDataRoom = row.getAttribute('data-data-room') === 'Yes';
                     var isHighlighted = row.getAttribute('data-highlighted') === 'Yes';
                     
-                    var maxDealSize = parseFloat(row.cells[7].innerText.replace(/[^0-9.-]+/g,'')) || 0;
-                    var source = row.getAttribute('data-source');
-                    var showBroker = !brokerChecked || (maxDealSize >= 500000 && source !== 'Notice - Co-Broker');
+                    var showBroker = true;  // 'Available for Brokers' filter removed
 
                     var showType = (buyChecked && type === 'buy') || (sellChecked && type === 'sell');
                     var showStructure = (directChecked && isDirect) || (spvChecked && isSPV) || (forwardChecked && isForward);
@@ -1627,7 +1624,7 @@ def lambda_handler(event, context):
         <div class="ticket-size-filter">
             <div class="filter-row">
                 <div class="slider-group">
-                    <strong>My ticket size:</strong>
+                    <strong>Ticket Size:</strong>
                     <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="0" data-hi="250000" checked onchange="filterTable()"> &lt;$250K</label>
                     <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="250000" data-hi="500000" checked onchange="filterTable()"> $250K–$500K</label>
                     <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="500000" data-hi="1000000" checked onchange="filterTable()"> $500K–$1M</label>
@@ -1637,10 +1634,6 @@ def lambda_handler(event, context):
                 <div class="right-filters">
                     <div class="bottom-filter-group">
                         <label class="checkbox-label"><input type="checkbox" id="dataRoomFilter" onchange="filterTable()"> Data Room</label>
-                    </div>
-                    <div class="spacer"></div>
-                    <div class="bottom-filter-group">
-                        <label class="checkbox-label"><input type="checkbox" id="brokerFilter" onchange="filterTable()"> Available for Brokers</label>
                     </div>
                     <div class="spacer"></div>
                     <div class="bottom-filter-group">
