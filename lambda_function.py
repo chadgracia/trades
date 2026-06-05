@@ -799,7 +799,7 @@ def lambda_handler(event, context):
 
 
         table_rows += f"""
-        <tr class="deal-row {deal['type'].lower()} {deal['structure_class']}" data-deal-id="{deal['id']}" data-management-fee="{deal['management_fee']}" data-carry="{deal['carry']}" data-stage="{deal['stage']}" data-data-room="{deal['data_room']}" data-highlighted="{deal['highlighted']}">
+        <tr class="deal-row {deal['type'].lower()} {deal['structure_class']}" data-deal-id="{deal['id']}" data-management-fee="{deal['management_fee']}" data-carry="{deal['carry']}" data-stage="{deal['stage']}" data-data-room="{deal['data_room']}" data-highlighted="{deal['highlighted']}" data-layers="{deal.get('layers') or ''}">
             <td><a href="https://trades.graciagroup.com/deal/{deal['id']}">{deal['id']}</a></td>
             <td>{deal['type']}</td>
             <td>{company_cell}</td>
@@ -1360,6 +1360,7 @@ def lambda_handler(event, context):
                 var carryChecked = document.getElementById('carryFilter').checked;
                 var dataRoomChecked = document.getElementById('dataRoomFilter').checked;
                 var highlightedChecked = document.getElementById('highlightedFilter').checked;
+                var twoLayerOk = document.getElementById('twoLayerFilter').checked;
 
                 var ticketBuckets = [];
                 var ticketCheckboxes = document.getElementsByClassName('ticket-filter');
@@ -1387,7 +1388,10 @@ def lambda_handler(event, context):
                     var stage = row.getAttribute('data-stage');
                     var hasDataRoom = row.getAttribute('data-data-room') === 'Yes';
                     var isHighlighted = row.getAttribute('data-highlighted') === 'Yes';
-                    
+                    var layers = (row.getAttribute('data-layers') || '').toLowerCase();
+                    var isMultiLayer = layers.indexOf('2-layer') !== -1 || layers.indexOf('3-layer') !== -1;
+                    var showLayer = twoLayerOk || !isMultiLayer;
+
                     var showBroker = true;  // 'Available for Brokers' filter removed
 
                     var showType = (buyChecked && type === 'buy') || (sellChecked && type === 'sell');
@@ -1412,7 +1416,8 @@ def lambda_handler(event, context):
                               showTicketSize && 
                               (!dataRoomChecked || hasDataRoom) &&
                               (!highlightedChecked || isHighlighted) &&
-                              showBroker;
+                              showBroker &&
+                              showLayer;
                     
                     if (selectedCompanies.length > 0 && selectedCompanies.indexOf(company) === -1) {{
                         show = false;
@@ -1634,6 +1639,10 @@ def lambda_handler(event, context):
                 <div class="right-filters">
                     <div class="bottom-filter-group">
                         <label class="checkbox-label"><input type="checkbox" id="dataRoomFilter" onchange="filterTable()"> Data Room</label>
+                    </div>
+                    <div class="spacer"></div>
+                    <div class="bottom-filter-group">
+                        <label class="checkbox-label"><input type="checkbox" id="twoLayerFilter" checked onchange="filterTable()"> 2-Layer OK</label>
                     </div>
                     <div class="spacer"></div>
                     <div class="bottom-filter-group">
