@@ -1,7 +1,10 @@
 import json
 import os
 import base64
+import hmac
+import hashlib
 import urllib.request
+import urllib.parse
 import urllib.error
 import boto3
 import logging
@@ -10,6 +13,55 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 from datetime import datetime, timezone, timedelta
+
+
+# --- Additive Cognito identity capture (does not affect access) ---
+COGNITO_TOKEN_URL = "https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/oauth2/token"
+COGNITO_CLIENT_ID = "71vrglkidm13jb73u7nje3d1t2"
+COGNITO_REDIRECT_URI = "https://trades.graciagroup.com"
+COGNITO_CLIENT_SECRET = os.environ.get("COGNITO_CLIENT_SECRET", "")
+IDENTITY_SECRET = os.environ.get("IDENTITY_SECRET", "")
+
+
+def _exchange_code_for_email(code):
+    """Exchange a Cognito auth code for tokens and return the user's email,
+    or None on any failure. Never raises."""
+    if not (COGNITO_CLIENT_SECRET and code):
+        return None
+    try:
+        data = urllib.parse.urlencode({
+            "grant_type": "authorization_code",
+            "client_id": COGNITO_CLIENT_ID,
+            "code": code,
+            "redirect_uri": COGNITO_REDIRECT_URI,
+        }).encode()
+        basic = base64.b64encode(
+            f"{COGNITO_CLIENT_ID}:{COGNITO_CLIENT_SECRET}".encode()
+        ).decode()
+        req = urllib.request.Request(
+            COGNITO_TOKEN_URL, data=data,
+            headers={"Authorization": f"Basic {basic}",
+                     "Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            tokens = json.loads(resp.read().decode())
+        id_token = tokens.get("id_token")
+        if not id_token:
+            return None
+        payload_b64 = id_token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+        return claims.get("email")
+    except Exception as e:
+        logger.warning(f"Cognito code exchange failed (non-fatal): {e}")
+        return None
+
+
+def _make_identity_cookie(email):
+    sig = hmac.new(IDENTITY_SECRET.encode(), email.encode(), hashlib.sha256).hexdigest()
+    val = base64.urlsafe_b64encode(f"{email}|{sig}".encode()).decode().rstrip("=")
+    return f"gg_id={val}; Max-Age=2592000; Path=/; Secure; SameSite=Lax"
 
 
 def _get_http_method(event):
@@ -618,12 +670,18 @@ def lambda_handler(event, context):
             or '/'
         )
         logger.info("Cognito auth code received; redirecting to clean URL %s", clean_path)
+        cookies = ['CognitoIdentityServiceProvider=1; Max-Age=2592000; Path=/; Secure; SameSite=Lax']
+        try:
+            email = _exchange_code_for_email(query_params.get('code'))
+            if email and IDENTITY_SECRET:
+                cookies.append(_make_identity_cookie(email))
+                logger.info("Identity captured for Cognito login")
+        except Exception as e:
+            logger.warning(f"Identity capture failed (non-fatal): {e}")
         return {
             'statusCode': 302,
-            'headers': {
-                'Location': clean_path,
-                'Set-Cookie': 'CognitoIdentityServiceProvider=1; Max-Age=2592000; Path=/; Secure; SameSite=Lax',
-            },
+            'headers': {'Location': clean_path},
+            'cookies': cookies,
             'body': '',
         }
 
@@ -1578,7 +1636,7 @@ def lambda_handler(event, context):
                 <h2>Private Secondary Indications</h2>
                 <p>This platform provides research and pricing for accredited investors.</p>
                 <div class="modal-buttons">
-                    <a href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&redirect_uri=https://trades.graciagroup.com" 
+                    <a href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&scope=openid+email&redirect_uri=https://trades.graciagroup.com" 
                         class="modal-btn primary-btn">Sign In or Register</a>
                 </div>
             </div>
