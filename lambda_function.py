@@ -995,18 +995,23 @@ def lambda_handler(event, context):
             .checkbox-label input {{
                 margin-right: 5px;
             }}
+            .slider-group .checkbox-label,
+            .bottom-filter-group .checkbox-label {{
+                margin-right: 0;
+            }}
 
             .filter-row {{
                 display: flex;
+                flex-wrap: wrap;
                 align-items: center;
-                position: relative;
+                gap: 16px;
                 width: 100%;
             }}
 
             .slider-group {{
                 display: flex;
                 align-items: center;
-                gap: 15px;
+                gap: 16px;
                 flex-shrink: 0;
                 border: 1px solid #ddd;
                 padding: 10px;
@@ -1015,8 +1020,7 @@ def lambda_handler(event, context):
             .right-filters {{
                 display: flex;
                 align-items: center;
-                gap: 20px;
-                margin-left: auto;
+                gap: 16px;
             }}
 
             .bottom-filter-group {{
@@ -1027,8 +1031,7 @@ def lambda_handler(event, context):
             }}
 
             .spacer {{
-                width: 10px;
-    
+                display: none;
             }}
             .data-room-group {{
                 position: absolute;
