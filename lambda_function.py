@@ -1617,6 +1617,7 @@ def lambda_handler(event, context):
                     <span class="filter-label">Structure:</span>
                     <label class="checkbox-label"><input type="checkbox" id="directFilter" checked onchange="filterTable()"> Direct</label>
                     <label class="checkbox-label"><input type="checkbox" id="spvFilter" checked onchange="filterTable()"> Fund</label>
+                    <label class="checkbox-label"><input type="checkbox" id="multiLayerFilter" checked onchange="filterTable()"> (Multi-Layer)</label>
                     <label class="checkbox-label"><input type="checkbox" id="forwardFilter" checked onchange="filterTable()"> Forward</label>
                 </div>
                 <div class="filter-group">
@@ -1639,10 +1640,6 @@ def lambda_handler(event, context):
                 <div class="right-filters">
                     <div class="bottom-filter-group">
                         <label class="checkbox-label"><input type="checkbox" id="dataRoomFilter" onchange="filterTable()"> Data Room</label>
-                    </div>
-                    <div class="spacer"></div>
-                    <div class="bottom-filter-group">
-                        <label class="checkbox-label"><input type="checkbox" id="multiLayerFilter" checked onchange="filterTable()"> Multi-Layer SPV</label>
                     </div>
                     <div class="spacer"></div>
                     <div class="bottom-filter-group">
