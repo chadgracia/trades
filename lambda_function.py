@@ -871,7 +871,12 @@ def lambda_handler(event, context):
             }}
             h1 {{
                 color: #2c3e50;
-                margin: 0 0 20px 0;
+                margin: 0 0 16px 0;
+                font-size: 28px;
+                font-weight: 700;
+                letter-spacing: -0.01em;
+                padding-bottom: 12px;
+                border-bottom: 2px solid #e0e0e0;
             }}
             table {{
                 border-collapse: collapse;
@@ -934,8 +939,6 @@ def lambda_handler(event, context):
             
             .btn {{
                 display: inline-block;
-                background-color: #3498db;
-                color: white;
                 padding: 10px 20px;
                 text-decoration: none;
                 border-radius: 5px;
@@ -946,9 +949,8 @@ def lambda_handler(event, context):
             }}
 
             .btn:hover {{
-                background-color: #2980b9;
                 box-shadow: 0 4px 8px rgba(0,0,0,0.2);  /* Slightly stronger shadow on hover */
-            
+
             }}
             .company-buttons {{
                 margin-bottom: 20px;
@@ -1217,13 +1219,6 @@ def lambda_handler(event, context):
                 transition: background-color 0.3s;
                 white-space: nowrap;
             }}
-            .nl-search-btn {{
-                background-color: #3498db;
-                color: white;
-            }}
-            .nl-search-btn:hover:not(:disabled) {{
-                background-color: #2980b9;
-            }}
             .nl-search-btn:disabled {{
                 background-color: #95a5a6;
                 cursor: not-allowed;
@@ -1326,7 +1321,7 @@ def lambda_handler(event, context):
 
             function toggleNonHighlighted() {{
                 var section = document.getElementById("nonHighlightedCompanies");
-                var button = document.querySelector(".toggle-btn");
+                var button = document.querySelector(".btn.secondary");
 
                 if (section.style.display === "none") {{
                     section.style.display = "block";
@@ -1594,7 +1589,7 @@ def lambda_handler(event, context):
         <div class="nl-search-container">
             <div class="nl-search-row">
                 <input type="text" id="nlSearchInput" class="nl-search-input" placeholder="Ask a question about the deals (e.g., 'SpaceX offers under $50M ticket size')" onkeydown="if(event.key==='Enter'){{performSearch()}}">
-                <button id="nlSearchBtn" class="nl-search-btn" onclick="performSearch()">Search</button>
+                <button id="nlSearchBtn" class="nl-search-btn btn" onclick="performSearch()">Search</button>
                 <button id="nlClearBtn" class="nl-clear-btn" onclick="clearSearch()">Clear search</button>
             </div>
             <div id="nlSearchStatus" class="nl-search-status"></div>
@@ -1654,7 +1649,7 @@ def lambda_handler(event, context):
             <!-- Always visible: Highlighted Companies -->
             <div id="highlightedCompanies">
                 {highlighted_company_buttons}
-                <button class="toggle-btn" onclick="toggleNonHighlighted()">Show All Companies ▼</button>
+                <button class="btn secondary" onclick="toggleNonHighlighted()">Show All Companies ▼</button>
             </div>
 
             <div id="nonHighlightedCompanies" style="display: none;">
