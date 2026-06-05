@@ -1585,16 +1585,6 @@ def lambda_handler(event, context):
         <button class="btn" onclick="location.reload()">Refresh</button>
         {portfolio_btn}
 
-        <p style="margin-bottom: 10px; font-size: 15px; color: #222; font-weight: 500;">What are you looking for today? Try <strong>&ldquo;single layer Anthropic offers&rdquo;</strong> or <strong>&ldquo;direct robotics deals&rdquo;</strong></p>
-        <div class="nl-search-container">
-            <div class="nl-search-row">
-                <input type="text" id="nlSearchInput" class="nl-search-input" placeholder="Ask a question about the deals (e.g., 'SpaceX offers under $50M ticket size')" onkeydown="if(event.key==='Enter'){{performSearch()}}">
-                <button id="nlSearchBtn" class="nl-search-btn btn" onclick="performSearch()">Search</button>
-                <button id="nlClearBtn" class="nl-clear-btn" onclick="clearSearch()">Clear search</button>
-            </div>
-            <div id="nlSearchStatus" class="nl-search-status"></div>
-        </div>
-
         <div class="header">
             <h1>Indications for Accredited Investors <span id="dealCount" class="deal-count"></span></h1>
             <div class="filter-section">
@@ -1643,6 +1633,17 @@ def lambda_handler(event, context):
             </div>
             </div>
         </div>
+
+        <p style="margin-bottom: 10px; font-size: 15px; color: #222; font-weight: 500;">What are you looking for today? Try <strong>&ldquo;single layer Anthropic offers&rdquo;</strong> or <strong>&ldquo;direct robotics deals&rdquo;</strong></p>
+        <div class="nl-search-container">
+            <div class="nl-search-row">
+                <input type="text" id="nlSearchInput" class="nl-search-input" placeholder="Ask a question about the deals (e.g., 'SpaceX offers under $50M ticket size')" onkeydown="if(event.key==='Enter'){{performSearch()}}">
+                <button id="nlSearchBtn" class="nl-search-btn btn" onclick="performSearch()">Search</button>
+                <button id="nlClearBtn" class="nl-clear-btn" onclick="clearSearch()">Clear search</button>
+            </div>
+            <div id="nlSearchStatus" class="nl-search-status"></div>
+        </div>
+
         <div class="company-filter">
             <strong>Highlighted Companies:</strong>
 
