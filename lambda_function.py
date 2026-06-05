@@ -877,6 +877,19 @@ def lambda_handler(event, context):
                 font-weight: bold;
                 margin-right: 5px;
             }}
+            .fund-group {{
+                display: inline-flex;
+                align-items: center;
+            }}
+            .fund-group .checkbox-label {{
+                margin-right: 0;
+            }}
+            .sub-filter {{
+                margin-left: 6px;
+            }}
+            .sub-filter.disabled {{
+                opacity: 0.45;
+            }}
             h1 {{
                 color: #2c3e50;
                 margin: 0 0 16px 0;
@@ -1361,6 +1374,8 @@ def lambda_handler(event, context):
                 var dataRoomChecked = document.getElementById('dataRoomFilter').checked;
                 var highlightedChecked = document.getElementById('highlightedFilter').checked;
                 var multiLayerOk = document.getElementById('multiLayerFilter').checked;
+                document.getElementById('multiLayerFilter').disabled = !spvChecked;
+                document.getElementById('multiLayerWrap').classList.toggle('disabled', !spvChecked);
 
                 var ticketBuckets = [];
                 var ticketCheckboxes = document.getElementsByClassName('ticket-filter');
@@ -1616,9 +1631,11 @@ def lambda_handler(event, context):
                 <div class="filter-group">
                     <span class="filter-label">Structure:</span>
                     <label class="checkbox-label"><input type="checkbox" id="directFilter" checked onchange="filterTable()"> Direct</label>
-                    <label class="checkbox-label"><input type="checkbox" id="spvFilter" checked onchange="filterTable()"> Fund</label>
-                    <label class="checkbox-label"><input type="checkbox" id="multiLayerFilter" checked onchange="filterTable()"> (Multi-Layer)</label>
                     <label class="checkbox-label"><input type="checkbox" id="forwardFilter" checked onchange="filterTable()"> Forward</label>
+                    <span class="fund-group">
+                        <label class="checkbox-label"><input type="checkbox" id="spvFilter" checked onchange="filterTable()"> Fund</label>
+                        <span class="sub-filter" id="multiLayerWrap">(<label class="checkbox-label"><input type="checkbox" id="multiLayerFilter" checked onchange="filterTable()"> Multi-Layer</label>)</span>
+                    </span>
                 </div>
                 <div class="filter-group">
                     <span class="filter-label">Fees:</span>
