@@ -1360,7 +1360,7 @@ def lambda_handler(event, context):
                 var carryChecked = document.getElementById('carryFilter').checked;
                 var dataRoomChecked = document.getElementById('dataRoomFilter').checked;
                 var highlightedChecked = document.getElementById('highlightedFilter').checked;
-                var twoLayerOk = document.getElementById('twoLayerFilter').checked;
+                var multiLayerOk = document.getElementById('multiLayerFilter').checked;
 
                 var ticketBuckets = [];
                 var ticketCheckboxes = document.getElementsByClassName('ticket-filter');
@@ -1390,7 +1390,7 @@ def lambda_handler(event, context):
                     var isHighlighted = row.getAttribute('data-highlighted') === 'Yes';
                     var layers = (row.getAttribute('data-layers') || '').toLowerCase();
                     var isMultiLayer = layers.indexOf('2-layer') !== -1 || layers.indexOf('3-layer') !== -1;
-                    var showLayer = twoLayerOk || !isMultiLayer;
+                    var showLayer = multiLayerOk || !isMultiLayer;
 
                     var showBroker = true;  // 'Available for Brokers' filter removed
 
@@ -1642,7 +1642,7 @@ def lambda_handler(event, context):
                     </div>
                     <div class="spacer"></div>
                     <div class="bottom-filter-group">
-                        <label class="checkbox-label"><input type="checkbox" id="twoLayerFilter" checked onchange="filterTable()"> 2-Layer OK</label>
+                        <label class="checkbox-label"><input type="checkbox" id="multiLayerFilter" checked onchange="filterTable()"> Multi-Layer SPV</label>
                     </div>
                     <div class="spacer"></div>
                     <div class="bottom-filter-group">
