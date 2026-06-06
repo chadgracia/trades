@@ -788,6 +788,12 @@ def lambda_handler(event, context):
         stage_html = f'<span class="stage-cell" data-tooltip="{stage_tooltips[deal["stage"]]}">{deal["stage"]}</span>'
         
         company_cell = deal['company']
+
+        # Seller-only layer annotation folded into the Structure column, e.g. "Fund (2L)"
+        layers_val = deal.get('layers') or ''
+        is_seller = (deal.get('type') or '').strip().lower().startswith('sell')
+        layer_label = {'spv on cap table': '1L', '2-layer spv': '2L', '3-layer spv': '3L'}.get(layers_val.strip().lower(), '')
+        layer_badge_html = f' <span class="layer-badge" title="{layers_val}">({layer_label})</span>' if (is_seller and layer_label) else ''
         
         # Calculate valuations
         net_valuation = calculate_valuation(deal['net'], deal['company_lr_pps'], deal['company_lr_val'])
@@ -803,7 +809,7 @@ def lambda_handler(event, context):
             <td><a href="https://trades.graciagroup.com/deal/{deal['id']}">{deal['id']}</a></td>
             <td>{deal['type']}</td>
             <td>{company_cell}</td>
-            <td>{deal['structure']}</td>
+            <td>{deal['structure']}{layer_badge_html}</td>
             <td class="price-cell" data-valuation="{net_valuation_text}">{net_display}</td>
             <td class="price-cell" data-valuation="{gross_valuation_text}">{gross_display}</td>
             <td>{format_currency(deal['min_deal_size'])}</td>
@@ -889,6 +895,11 @@ def lambda_handler(event, context):
             }}
             .sub-filter.disabled {{
                 opacity: 0.45;
+            }}
+            .layer-badge {{
+                color: #6b7280;
+                font-weight: 600;
+                white-space: nowrap;
             }}
             h1 {{
                 color: #2c3e50;
