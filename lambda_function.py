@@ -116,10 +116,8 @@ def _portfolio_button_html(event):
     token = _make_handoff_token(email)
     href = f"{PORTFOLIO_URL}/?sso={urllib.parse.quote(token, safe='')}"
     return (
-        f'<a href="{href}" target="_blank" rel="noopener" '
-        'style="display:inline-block;padding:8px 16px;border-radius:8px;'
-        'background:var(--pos,#1f7a4d);color:#fff;font-weight:600;text-decoration:none;'
-        'font-size:14px;">Your Portfolio</a>'
+        f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
+        'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);">Your Portfolio</a>'
     )
 
 
