@@ -118,7 +118,7 @@ def _portfolio_button_html(event):
     return (
         f'<a href="{href}" target="_blank" rel="noopener" '
         'style="display:inline-block;padding:8px 16px;border-radius:8px;'
-        'background:var(--ink,#16181d);color:#fff;font-weight:600;text-decoration:none;'
+        'background:var(--pos,#1f7a4d);color:#fff;font-weight:600;text-decoration:none;'
         'font-size:14px;">Your Portfolio</a>'
     )
 
