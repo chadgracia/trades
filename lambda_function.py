@@ -983,6 +983,8 @@ def lambda_handler(event, context):
             .btn {{
                 display: inline-block;
                 padding: 10px 20px;
+                line-height: 1.2;
+                font-size: 15px;
                 text-decoration: none;
                 border-radius: 5px;
                 transition: background-color 0.3s, box-shadow 0.3s;  /* Added shadow transition */
