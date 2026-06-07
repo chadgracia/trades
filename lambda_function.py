@@ -117,7 +117,7 @@ def _portfolio_button_html(event):
     href = f"{PORTFOLIO_URL}/?sso={urllib.parse.quote(token, safe='')}"
     return (
         f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
-        'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);">Your Portfolio</a>'
+        'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);margin-left:auto;">Your Portfolio</a>'
     )
 
 
@@ -973,6 +973,13 @@ def lambda_handler(event, context):
                 z-index: 20;
             }}
             
+            .topbar {{
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 10px;
+                margin-bottom: 10px;
+            }}
             .btn {{
                 display: inline-block;
                 padding: 10px 20px;
@@ -1632,11 +1639,13 @@ def lambda_handler(event, context):
         </script>
     </head>
     <body>
-        <button class="btn" onclick="window.location.href='https://www.graciagroup.com/'">Gracia Group Home</button>
-        <button class="btn" onclick="window.location.href='https://6dzzw7nvdqtulz3hrtux3ofr440jbjho.lambda-url.us-east-1.on.aws/'">Create Watchlist</button>
-        <button class="btn" onclick="downloadPDF()">Download PDF</button>
-        <button class="btn" onclick="location.reload()">Refresh</button>
-        {portfolio_btn}
+        <div class="topbar">
+            <button class="btn" onclick="window.location.href='https://www.graciagroup.com/'">Gracia Group Home</button>
+            <button class="btn" onclick="window.location.href='https://6dzzw7nvdqtulz3hrtux3ofr440jbjho.lambda-url.us-east-1.on.aws/'">Create Watchlist</button>
+            <button class="btn" onclick="downloadPDF()">Download PDF</button>
+            <button class="btn" onclick="location.reload()">Refresh</button>
+            {portfolio_btn}
+        </div>
 
         <div class="header">
             <h1>Indications for Accredited Investors <span id="dealCount" class="deal-count"></span></h1>
