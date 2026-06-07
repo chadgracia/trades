@@ -118,7 +118,7 @@ def _portfolio_button_html(event):
     return (
         f'<a href="{href}" target="_blank" rel="noopener" '
         'style="display:inline-block;padding:8px 16px;border-radius:8px;'
-        'background:#1a73e8;color:#fff;font-weight:600;text-decoration:none;'
+        'background:var(--ink,#16181d);color:#fff;font-weight:600;text-decoration:none;'
         'font-size:14px;">Your Portfolio</a>'
     )
 
@@ -961,7 +961,7 @@ def lambda_handler(event, context):
                 left: 50%;
                 transform: translateX(-50%);
                 padding: 5px 10px;
-                background-color: #3498db;
+                background-color: var(--accent, #3d5a73);
                 color: white;
                 border-radius: 4px;
                 font-size: 14px;
@@ -1000,7 +1000,7 @@ def lambda_handler(event, context):
                 background-color: #e0e0e0;
             }}
             .company-btn.active {{
-                background-color: #3498db; /* Restore original blue color when clicked */
+                background-color: var(--accent, #3d5a73); /* Restore original blue color when clicked */
                 color: white; /* Keep text readable */
             }}
 
@@ -1018,6 +1018,9 @@ def lambda_handler(event, context):
             }}
             .checkbox-label input {{
                 margin-right: 5px;
+            }}
+            input[type="checkbox"] {{
+                accent-color: var(--accent, #3d5a73);
             }}
             .slider-group .checkbox-label,
             .bottom-filter-group .checkbox-label {{
@@ -1086,7 +1089,7 @@ def lambda_handler(event, context):
                 left: 50%;
                 transform: translateX(-50%);
                 padding: 5px 10px;
-                background-color: #3498db;
+                background-color: var(--accent, #3d5a73);
                 color: white;  /* This is for the tooltip text */
                 border-radius: 4px;
                 font-size: 14px;
@@ -1107,7 +1110,7 @@ def lambda_handler(event, context):
                 left: 50%;
                 transform: translateX(-50%);
                 padding: 5px 10px;
-                background-color: #3498db;
+                background-color: var(--accent, #3d5a73);
                 color: white;  /* This is for the tooltip text */
                 border-radius: 4px;
                 font-size: 14px;
@@ -1209,7 +1212,7 @@ def lambda_handler(event, context):
             }}
 
             .primary-btn {{
-                background-color: #3498db;
+                background-color: var(--accent, #3d5a73);
                 color: white;
             }}
 
@@ -1244,7 +1247,7 @@ def lambda_handler(event, context):
             }}
             .nl-search-input:focus {{
                 outline: none;
-                border-color: #3498db;
+                border-color: var(--accent, #3d5a73);
             }}
             .nl-search-btn, .nl-clear-btn {{
                 padding: 10px 18px;
