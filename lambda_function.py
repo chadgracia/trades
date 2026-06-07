@@ -903,12 +903,18 @@ def lambda_handler(event, context):
             }}
             h1 {{
                 color: #2c3e50;
-                margin: 0 0 16px 0;
+                margin: 0 0 4px 0;
                 font-size: 28px;
                 font-weight: 700;
                 letter-spacing: -0.01em;
+            }}
+            .subtitle {{
+                margin: 0 0 16px 0;
                 padding-bottom: 12px;
                 border-bottom: 2px solid #e0e0e0;
+                font-style: italic;
+                font-size: 15px;
+                color: #6b7280;
             }}
             table {{
                 border-collapse: collapse;
@@ -1000,7 +1006,7 @@ def lambda_handler(event, context):
                 background-color: #e0e0e0;
             }}
             .company-btn.active {{
-                background-color: var(--accent, #3d5a73); /* Restore original blue color when clicked */
+                background-color: var(--accent, #3d5a73); /* selected: brand accent */
                 color: white; /* Keep text readable */
             }}
 
@@ -1636,6 +1642,7 @@ def lambda_handler(event, context):
 
         <div class="header">
             <h1>Indications for Accredited Investors <span id="dealCount" class="deal-count"></span></h1>
+            <p class="subtitle">Search our full book of live private securities opportunities.</p>
             <div class="filter-section">
                 <div class="filter-group">
                     <span class="filter-label">Type:</span>
