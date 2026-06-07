@@ -787,11 +787,12 @@ def lambda_handler(event, context):
         
         company_cell = deal['company']
 
-        # Seller-only layer annotation folded into the Structure column, e.g. "Fund (2L)"
+        # Layer annotation folded into the Structure column, e.g. "Fund (2L)".
+        # Shown for any deal (buy or sell) that carries a recognized layers value;
+        # buy orders that don't reference layers simply omit it.
         layers_val = deal.get('layers') or ''
-        is_seller = (deal.get('type') or '').strip().lower().startswith('sell')
         layer_label = {'spv on cap table': '1L', '2-layer spv': '2L', '3-layer spv': '3L'}.get(layers_val.strip().lower(), '')
-        layer_badge_html = f' <span class="layer-badge" title="{layers_val}">({layer_label})</span>' if (is_seller and layer_label) else ''
+        layer_badge_html = f' <span class="layer-badge" title="{layers_val}">({layer_label})</span>' if layer_label else ''
         
         # Calculate valuations
         net_valuation = calculate_valuation(deal['net'], deal['company_lr_pps'], deal['company_lr_val'])
