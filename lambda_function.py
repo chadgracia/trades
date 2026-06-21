@@ -806,7 +806,7 @@ def lambda_handler(event, context):
 
         table_rows += f"""
         <tr class="deal-row {deal['type'].lower()} {deal['structure_class']}" data-deal-id="{deal['id']}" data-management-fee="{deal['management_fee']}" data-carry="{deal['carry']}" data-stage="{deal['stage']}" data-data-room="{deal['data_room']}" data-highlighted="{deal['highlighted']}" data-layers="{deal.get('layers') or ''}">
-            <td><a href="https://trades.graciagroup.com/deal/{deal['id']}">{deal['id']}</a><a class="nudge-bell" style="display:none;margin-left:8px;text-decoration:none;" href="https://ak5zolfpynhrimrsuw5rbjchwu0ktexz.lambda-url.us-east-1.on.aws/?deal_id={deal['id']}&key={NUDGE_KEY}" target="_blank" rel="noopener" title="Nudge client to update or cancel" onclick="return confirm('Send an update request to this client?')">🔔</a></td>
+            <td><a href="https://trades.graciagroup.com/deal/{deal['id']}">{deal['id']}</a></td>
             <td>{deal['type']}</td>
             <td>{company_cell}</td>
             <td>{deal['structure']}{layer_badge_html}</td>
@@ -818,7 +818,7 @@ def lambda_handler(event, context):
             <td>{format_currency(deal['company_lr_val'], include_cents=True)}</td>
             <td>{deal['management_fee']}</td>
             <td>{deal['carry']}</td>
-            <td>{get_last_updated_date(deal)}</td>
+            <td style="text-align:center;">{get_last_updated_date(deal)}<a class="nudge-bell" style="display:none;margin-top:4px;text-decoration:none;" href="https://ak5zolfpynhrimrsuw5rbjchwu0ktexz.lambda-url.us-east-1.on.aws/?deal_id={deal['id']}&key={NUDGE_KEY}" target="_blank" rel="noopener" title="Nudge client to update or cancel" onclick="return confirm('Send an update request to this client?')">🔔</a></td>
         </tr>
         """
 
@@ -1491,7 +1491,7 @@ def lambda_handler(event, context):
                     const isAdmin = adminKey === 'JK8h5Pq2L9aZ7rT3mN6bX' || getCookie('admin_key') === 'JK8h5Pq2L9aZ7rT3mN6bX';
 
                     if (isAdmin) {{
-                        document.querySelectorAll('.nudge-bell').forEach(function(b) {{ b.style.display = 'inline'; }});
+                        document.querySelectorAll('.nudge-bell').forEach(function(b) {{ b.style.display = 'block'; }});
                     }}
 
                     if (adminKey === 'JK8h5Pq2L9aZ7rT3mN6bX') {{
