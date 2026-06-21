@@ -818,7 +818,7 @@ def lambda_handler(event, context):
             <td>{format_currency(deal['company_lr_val'], include_cents=True)}</td>
             <td>{deal['management_fee']}</td>
             <td>{deal['carry']}</td>
-            <td style="text-align:center;">{get_last_updated_date(deal)}<a class="nudge-bell" data-deal-id="{deal['id']}" style="display:none;margin-top:4px;text-decoration:none !important;" href="https://ak5zolfpynhrimrsuw5rbjchwu0ktexz.lambda-url.us-east-1.on.aws/?deal_id={deal['id']}&key={NUDGE_KEY}" target="_blank" rel="noopener" title="Nudge client to update or cancel" onclick="if(!confirm('Send an update request to this client?'))return false;localStorage.setItem('nudge_'+this.getAttribute('data-deal-id'),Date.now());this.style.display='none';return true;">🔔</a></td>
+            <td style="text-align:center;">{get_last_updated_date(deal)}<br class="nudge-br" style="display:none;"><a class="nudge-bell" data-deal-id="{deal['id']}" style="display:none;margin-top:4px;text-decoration:none;" href="https://ak5zolfpynhrimrsuw5rbjchwu0ktexz.lambda-url.us-east-1.on.aws/?deal_id={deal['id']}&key={NUDGE_KEY}" target="_blank" rel="noopener" title="Nudge client to update or cancel" onclick="if(!confirm('Send an update request to this client?'))return false;localStorage.setItem('nudge_'+this.getAttribute('data-deal-id'),Date.now());this.style.display='none';var br=this.previousElementSibling;if(br&&br.tagName==='BR')br.style.display='none';return true;">🔔</a></td>
         </tr>
         """
 
@@ -1494,7 +1494,9 @@ def lambda_handler(event, context):
                         document.querySelectorAll('.nudge-bell').forEach(function(b) {{
                             var ts = localStorage.getItem('nudge_' + b.getAttribute('data-deal-id'));
                             if (ts && (Date.now() - parseInt(ts, 10)) < 2592000000) return;
-                            b.style.display = 'block';
+                            b.style.display = 'inline-block';
+                            var br = b.previousElementSibling;
+                            if (br && br.tagName === 'BR') br.style.display = 'inline';
                         }});
                     }}
 
