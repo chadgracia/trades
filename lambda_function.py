@@ -22,6 +22,7 @@ COGNITO_CLIENT_ID = "71vrglkidm13jb73u7nje3d1t2"
 COGNITO_REDIRECT_URI = "https://trades.graciagroup.com"
 COGNITO_CLIENT_SECRET = os.environ.get("COGNITO_CLIENT_SECRET", "")
 IDENTITY_SECRET = os.environ.get("IDENTITY_SECRET", "")
+NUDGE_KEY = os.environ.get("NUDGE_KEY", "")
 PORTFOLIO_URL = "https://jtm2stbnfelfoabi3yvyvyqovu0wxahu.lambda-url.us-east-1.on.aws"
 
 
@@ -805,7 +806,7 @@ def lambda_handler(event, context):
 
         table_rows += f"""
         <tr class="deal-row {deal['type'].lower()} {deal['structure_class']}" data-deal-id="{deal['id']}" data-management-fee="{deal['management_fee']}" data-carry="{deal['carry']}" data-stage="{deal['stage']}" data-data-room="{deal['data_room']}" data-highlighted="{deal['highlighted']}" data-layers="{deal.get('layers') or ''}">
-            <td><a href="https://trades.graciagroup.com/deal/{deal['id']}">{deal['id']}</a><a class="nudge-bell" style="display:none;margin-left:8px;text-decoration:none;" href="https://ak5zolfpynhrimrsuw5rbjchwu0ktexz.lambda-url.us-east-1.on.aws/?deal_id={deal['id']}&key=YUARqVzldaiY4P8EZA855faT" target="_blank" rel="noopener" title="Nudge client to update or cancel" onclick="return confirm('Send an update request to this client?')">🔔</a></td>
+            <td><a href="https://trades.graciagroup.com/deal/{deal['id']}">{deal['id']}</a><a class="nudge-bell" style="display:none;margin-left:8px;text-decoration:none;" href="https://ak5zolfpynhrimrsuw5rbjchwu0ktexz.lambda-url.us-east-1.on.aws/?deal_id={deal['id']}&key={NUDGE_KEY}" target="_blank" rel="noopener" title="Nudge client to update or cancel" onclick="return confirm('Send an update request to this client?')">🔔</a></td>
             <td>{deal['type']}</td>
             <td>{company_cell}</td>
             <td>{deal['structure']}{layer_badge_html}</td>
