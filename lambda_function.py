@@ -23,6 +23,8 @@ COGNITO_REDIRECT_URI = "https://trades.graciagroup.com"
 COGNITO_CLIENT_SECRET = os.environ.get("COGNITO_CLIENT_SECRET", "")
 IDENTITY_SECRET = os.environ.get("IDENTITY_SECRET", "")
 NUDGE_KEY = os.environ.get("NUDGE_KEY", "")
+LOI_PAGE_KEY = os.environ.get("LOI_PAGE_KEY", "")
+LOI_SEND_URL = "https://aep54fnrcp4bxiowlw3fvt26x40qhgpn.lambda-url.us-east-1.on.aws/"
 PORTFOLIO_URL = "https://jtm2stbnfelfoabi3yvyvyqovu0wxahu.lambda-url.us-east-1.on.aws"
 
 
@@ -818,7 +820,7 @@ def lambda_handler(event, context):
             <td>{format_currency(deal['company_lr_val'], include_cents=True)}</td>
             <td>{deal['management_fee']}</td>
             <td>{deal['carry']}</td>
-            <td style="text-align:center;">{get_last_updated_date(deal)}<br class="nudge-br" style="display:none;"><a class="nudge-bell" data-deal-id="{deal['id']}" style="display:none;margin-top:4px;text-decoration:none;" href="https://ak5zolfpynhrimrsuw5rbjchwu0ktexz.lambda-url.us-east-1.on.aws/?deal_id={deal['id']}&key={NUDGE_KEY}" target="_blank" rel="noopener" title="Nudge client to update or cancel" onclick="if(!confirm('Send an update request to this client?'))return false;localStorage.setItem('nudge_'+this.getAttribute('data-deal-id'),Date.now());this.style.display='none';var br=this.previousElementSibling;if(br&&br.tagName==='BR')br.style.display='none';return true;">🔔</a></td>
+            <td style="text-align:center;">{get_last_updated_date(deal)}<br class="nudge-br" style="display:none;"><a class="nudge-bell" data-deal-id="{deal['id']}" style="display:none;margin-top:4px;text-decoration:none;" href="https://ak5zolfpynhrimrsuw5rbjchwu0ktexz.lambda-url.us-east-1.on.aws/?deal_id={deal['id']}&key={NUDGE_KEY}" target="_blank" rel="noopener" title="Nudge client to update or cancel" onclick="if(!confirm('Send an update request to this client?'))return false;localStorage.setItem('nudge_'+this.getAttribute('data-deal-id'),Date.now());this.style.display='none';var br=this.previousElementSibling;if(br&&br.tagName==='BR')br.style.display='none';return true;">🔔</a><a class="loi-send" data-deal-id="{deal['id']}" style="display:none;margin-left:7px;text-decoration:none;" href="{LOI_SEND_URL}?send=1&deal_id={deal['id']}&key={LOI_PAGE_KEY}" target="_blank" rel="noopener" title="Email this client a Letter of Intent link" onclick="return confirm('Email an LOI link to this client?');">✍️</a></td>
         </tr>
         """
 
@@ -1497,6 +1499,12 @@ def lambda_handler(event, context):
                             b.style.display = 'inline-block';
                             var br = b.previousElementSibling;
                             if (br && br.tagName === 'BR') br.style.display = 'inline';
+                        }});
+                        document.querySelectorAll('.loi-send').forEach(function(a) {{
+                            a.style.display = 'inline-block';
+                            var td = a.closest('td');
+                            var br = td ? td.querySelector('.nudge-br') : null;
+                            if (br) br.style.display = 'inline';
                         }});
                     }}
 
