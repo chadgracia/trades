@@ -151,6 +151,20 @@ def _load_deals_from_s3():
     return json.loads(response['Body'].read().decode('utf-8'))
 
 
+def _load_directory_companies():
+    """Read the small directory_companies.json (a few KB) written by crm-snapshot.
+    Returns (highlight_names, list_names). Read-only; any failure returns empty
+    lists so the page still renders exactly as before."""
+    try:
+        s3 = boto3.client('s3')
+        obj = s3.get_object(Bucket='full-pipeline-cache', Key='directory_companies.json')
+        data = json.loads(obj['Body'].read().decode('utf-8'))
+        return data.get('highlight', []), data.get('list', [])
+    except Exception as e:
+        logger.error(f"Directory companies load failed (non-fatal): {e}")
+        return [], []
+
+
 def _call_claude_for_matching_ids(query, deals):
     """Return deal IDs matching the user's natural-language query.
 
@@ -766,12 +780,21 @@ def lambda_handler(event, context):
     )
 
     # Get a unique list of companies, prioritizing highlighted ones first
-    highlighted_companies = sorted(
-        {deal['company'] for deal in deals if deal['company'] and deal.get('highlighted') == 'Yes'}
-    )
-    non_highlighted_companies = sorted(
-        {deal['company'] for deal in deals if deal['company'] and deal.get('highlighted') != 'Yes'}
-    )
+    highlighted_set = {deal['company'] for deal in deals if deal['company'] and deal.get('highlighted') == 'Yes'}
+    non_highlighted_set = {deal['company'] for deal in deals if deal['company'] and deal.get('highlighted') != 'Yes'}
+
+    # Merge in Directory-flagged companies (from directory_companies.json). These may
+    # have NO deals at all (demand-only names) and still appear as grid buttons.
+    dir_highlight_names, dir_list_names = _load_directory_companies()
+    for nm in dir_highlight_names:
+        highlighted_set.add(nm)
+        non_highlighted_set.discard(nm)   # Highlight wins if also present elsewhere
+    for nm in dir_list_names:
+        if nm not in highlighted_set:     # don't demote a highlighted company
+            non_highlighted_set.add(nm)
+
+    highlighted_companies = sorted(highlighted_set)
+    non_highlighted_companies = sorted(non_highlighted_set)
 
     # Merge lists: highlighted first, then non-highlighted
     companies = highlighted_companies + non_highlighted_companies
