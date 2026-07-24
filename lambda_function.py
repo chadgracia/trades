@@ -151,39 +151,6 @@ def _load_deals_from_s3():
     return json.loads(response['Body'].read().decode('utf-8'))
 
 
-# Directory field (company custom_label_4004498) entry ids, confirmed from live CRM data.
-_DIRECTORY_HIGHLIGHT_ID = 7195852   # "Highlight" -> top (highlighted) section
-_DIRECTORY_LIST_ID = 7195851        # "List"      -> full (non-highlighted) section
-
-def _load_directory_companies():
-    """Read companies.json from full-pipeline-cache and return two lists of
-    company NAMES flagged via the Directory field:
-        (highlight_names, list_names)
-    Highlight wins if both are present. Read-only; any failure returns empty
-    lists so the page still renders exactly as before."""
-    try:
-        s3 = boto3.client('s3')
-        obj = s3.get_object(Bucket='full-pipeline-cache', Key='companies.json')
-        snap = json.loads(obj['Body'].read().decode('utf-8'))
-        companies = snap.get('companies', [])
-        highlight_names, list_names = [], []
-        for c in companies:
-            name = (c.get('name') or '').strip()
-            if not name:
-                continue
-            custom = c.get('custom_fields') or {}
-            directory_ids = set(custom.get('custom_label_4004498') or [])
-            if _DIRECTORY_HIGHLIGHT_ID in directory_ids:
-                highlight_names.append(name)
-            elif _DIRECTORY_LIST_ID in directory_ids:
-                list_names.append(name)
-        logger.info(f"Directory: {len(highlight_names)} highlight, {len(list_names)} list")
-        return highlight_names, list_names
-    except Exception as e:
-        logger.error(f"Directory companies load failed (non-fatal): {e}")
-        return [], []
-
-
 def _call_claude_for_matching_ids(query, deals):
     """Return deal IDs matching the user's natural-language query.
 
@@ -799,21 +766,12 @@ def lambda_handler(event, context):
     )
 
     # Get a unique list of companies, prioritizing highlighted ones first
-    highlighted_set = {deal['company'] for deal in deals if deal['company'] and deal.get('highlighted') == 'Yes'}
-    non_highlighted_set = {deal['company'] for deal in deals if deal['company'] and deal.get('highlighted') != 'Yes'}
-
-    # Merge in Directory-flagged companies (from companies.json). These may have
-    # NO deals at all (e.g. demand-only names) and still appear as grid buttons.
-    dir_highlight_names, dir_list_names = _load_directory_companies()
-    for nm in dir_highlight_names:
-        highlighted_set.add(nm)
-        non_highlighted_set.discard(nm)   # Highlight wins if also present elsewhere
-    for nm in dir_list_names:
-        if nm not in highlighted_set:     # don't demote a highlighted company
-            non_highlighted_set.add(nm)
-
-    highlighted_companies = sorted(highlighted_set)
-    non_highlighted_companies = sorted(non_highlighted_set)
+    highlighted_companies = sorted(
+        {deal['company'] for deal in deals if deal['company'] and deal.get('highlighted') == 'Yes'}
+    )
+    non_highlighted_companies = sorted(
+        {deal['company'] for deal in deals if deal['company'] and deal.get('highlighted') != 'Yes'}
+    )
 
     # Merge lists: highlighted first, then non-highlighted
     companies = highlighted_companies + non_highlighted_companies
