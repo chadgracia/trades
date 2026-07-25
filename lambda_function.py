@@ -159,10 +159,10 @@ def _load_directory_companies():
         s3 = boto3.client('s3')
         obj = s3.get_object(Bucket='full-pipeline-cache', Key='directory_companies.json')
         data = json.loads(obj['Body'].read().decode('utf-8'))
-        return data.get('highlight', []), data.get('list', [])
+        return data.get('highlight', []), data.get('list', []), data.get('pricing', {})
     except Exception as e:
         logger.error(f"Directory companies load failed (non-fatal): {e}")
-        return [], []
+        return [], [], {}
 
 
 def _call_claude_for_matching_ids(query, deals):
@@ -798,13 +798,34 @@ def lambda_handler(event, context):
 
     # Merge in Directory-flagged companies (from directory_companies.json). These may
     # have NO deals at all (demand-only names) and still appear as grid buttons.
-    dir_highlight_names, dir_list_names = _load_directory_companies()
+    dir_highlight_names, dir_list_names, dir_pricing = _load_directory_companies()
     for nm in dir_highlight_names:
         highlighted_set.add(nm)
         non_highlighted_set.discard(nm)   # Highlight wins if also present elsewhere
     for nm in dir_list_names:
         if nm not in highlighted_set:     # don't demote a highlighted company
             non_highlighted_set.add(nm)
+
+    # Companies that have ANY deal in the current book (buy or sell).
+    _companies_with_deals = {deal['company'] for deal in deals if deal['company']}
+    # Deal-less companies route to the web-bid form instead of filtering.
+    _dealless_names = (highlighted_set | non_highlighted_set) - _companies_with_deals
+    # name -> company_id from the directory pricing map.
+    _name_to_id = {v.get('name'): cid for cid, v in dir_pricing.items() if v.get('name')}
+    # Mint one handoff token for the logged-in user (None if not logged in).
+    _wb_email = _read_identity_email(event)
+    _wb_token = _make_handoff_token(_wb_email) if _wb_email else None
+    _WEB_BID_URL = 'https://7u6sphgup5gjuywcvpuwzhruiq0asgdz.lambda-url.us-east-1.on.aws'
+
+    def _company_btn(company):
+        # Deal-less company with a known id -> link to web-bid; else default filter.
+        cid = _name_to_id.get(company)
+        if company in _dealless_names and cid:
+            href = f"{_WEB_BID_URL}/?bid={urllib.parse.quote(str(cid))}&name={urllib.parse.quote(company)}"
+            if _wb_token:
+                href += f"&sso={urllib.parse.quote(_wb_token, safe='')}"
+            return f"<button class='company-btn' id=\"{company}\" onclick=\"window.location.href='{href}'\">{company}</button>"
+        return f"<button class='company-btn' id=\"{company}\" onclick=\"toggleCompanyFilter('{company}')\">{company}</button>"
 
     highlighted_companies = sorted(highlighted_set)
     non_highlighted_companies = sorted(non_highlighted_set)
@@ -861,15 +882,9 @@ def lambda_handler(event, context):
         """
 
     # Create buttons for companies
-    highlighted_company_buttons = " ".join([
-        f"<button class='company-btn' id=\"{company}\" onclick=\"toggleCompanyFilter('{company}')\">{company}</button>"
-        for company in highlighted_companies
-    ])
+    highlighted_company_buttons = " ".join([_company_btn(company) for company in highlighted_companies])
 
-    non_highlighted_company_buttons = " ".join([
-        f"<button class='company-btn' id=\"{company}\" onclick=\"toggleCompanyFilter('{company}')\">{company}</button>"
-        for company in non_highlighted_companies
-    ])
+    non_highlighted_company_buttons = " ".join([_company_btn(company) for company in non_highlighted_companies])
 
 
     portfolio_btn = _portfolio_button_html(event)
