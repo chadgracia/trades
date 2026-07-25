@@ -737,6 +737,19 @@ def lambda_handler(event, context):
     # suppressed on subsequent visits via the cookie the client-side JS
     # already checks).
     query_params = event.get('queryStringParameters') or {}
+
+    # TEMP TEST ROUTE — remove after web-bid testing.
+    if query_params.get('mint'):
+        _mint_email = _read_identity_email(event)
+        if not _mint_email:
+            return {'statusCode': 200, 'headers': {'Content-Type': 'text/html'},
+                    'body': '<p style="font-family:sans-serif;padding:40px">Not logged in. Open the trades page, sign in, then reload this ?mint=1 URL.</p>'}
+        _mint_tok = _make_handoff_token(_mint_email)
+        _wb = 'https://7u6sphgup5gjuywcvpuwzhruiq0asgdz.lambda-url.us-east-1.on.aws'
+        _mint_link = f"{_wb}/?bid=138490563&name=Positron&sso={urllib.parse.quote(_mint_tok, safe='')}"
+        return {'statusCode': 200, 'headers': {'Content-Type': 'text/html'},
+                'body': f'<p style="font-family:sans-serif;padding:40px">Logged in as {_mint_email}.<br><br><a href="{_mint_link}">Open web-bid test link (Positron)</a></p>'}
+
     if query_params.get('code'):
         clean_path = (
             event.get('rawPath')
