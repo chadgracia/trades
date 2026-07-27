@@ -1058,9 +1058,10 @@ def lambda_handler(event, context):
             .company-btn {{
                 background-color: #f0f0f0;
                 border: 1px solid #ddd;
-                padding: 5px 10px;
-                margin: 2px;
-                border-radius: 3px;
+                padding: 7px 14px;
+                margin: 3px;
+                border-radius: 5px;
+                font-size: 14px;
                 cursor: pointer;
                 transition: background-color 0.3s, color 0.3s;
             }}
