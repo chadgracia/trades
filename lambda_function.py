@@ -914,6 +914,33 @@ def lambda_handler(event, context):
                 margin-bottom: 20px;
                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             }}
+            .title-row {{
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 24px;
+                flex-wrap: wrap;
+                margin-bottom: 4px;
+            }}
+            .title-row h1 {{
+                margin: 0;
+            }}
+            .title-row .nl-search-container {{
+                background: none;
+                box-shadow: none;
+                padding: 0;
+                margin-bottom: 0;
+                flex: 0 1 400px;
+                min-width: 260px;
+            }}
+            .title-row .nl-search-btn {{
+                margin-bottom: 0;
+                padding: 10px 16px;
+            }}
+            .title-row .nl-search-status {{
+                min-height: 0;
+                margin-top: 4px;
+            }}
             .filter-section {{
                 display: flex;
                 flex-wrap: wrap;
@@ -1397,7 +1424,7 @@ def lambda_handler(event, context):
                 }})
                 .finally(function() {{
                     btn.disabled = false;
-                    btn.textContent = 'Search';
+                    btn.textContent = 'Go';
                 }});
             }}
 
@@ -1727,7 +1754,17 @@ def lambda_handler(event, context):
         </div>
 
         <div class="header">
-            <h1>Indications for Accredited Investors <span id="dealCount" class="deal-count"></span></h1>
+            <div class="title-row">
+                <h1>Indications for Accredited Investors <span id="dealCount" class="deal-count"></span></h1>
+                <div class="nl-search-container">
+                    <div class="nl-search-row">
+                        <input type="text" id="nlSearchInput" class="nl-search-input" placeholder="Search a company, or ask a question" onkeydown="if(event.key==='Enter'){{performSearch()}}">
+                        <button id="nlSearchBtn" class="nl-search-btn btn" onclick="performSearch()">Go</button>
+                        <button id="nlClearBtn" class="nl-clear-btn" onclick="clearSearch()">Clear</button>
+                    </div>
+                    <div id="nlSearchStatus" class="nl-search-status"></div>
+                </div>
+            </div>
             <p class="subtitle">Search our full book of live private securities opportunities.</p>
             <div class="filter-section">
                 <div class="filter-group">
@@ -1772,16 +1809,6 @@ def lambda_handler(event, context):
                 </div>
             </div>
             </div>
-        </div>
-
-        <p style="margin-bottom: 10px; font-size: 15px; color: #222; font-weight: 500;">What are you looking for today? Try <strong>&ldquo;single layer Anthropic offers&rdquo;</strong> or <strong>&ldquo;direct robotics deals&rdquo;</strong></p>
-        <div class="nl-search-container">
-            <div class="nl-search-row">
-                <input type="text" id="nlSearchInput" class="nl-search-input" placeholder="Ask a question about the deals (e.g., 'SpaceX offers under $50M ticket size')" onkeydown="if(event.key==='Enter'){{performSearch()}}">
-                <button id="nlSearchBtn" class="nl-search-btn btn" onclick="performSearch()">Search</button>
-                <button id="nlClearBtn" class="nl-clear-btn" onclick="clearSearch()">Clear search</button>
-            </div>
-            <div id="nlSearchStatus" class="nl-search-status"></div>
         </div>
 
         <div class="company-filter">
