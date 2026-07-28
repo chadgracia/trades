@@ -930,6 +930,7 @@ def lambda_handler(event, context):
                 box-shadow: none;
                 padding: 0;
                 margin-bottom: 0;
+                margin-top: 8px;
                 flex: 0 1 400px;
                 min-width: 260px;
             }}
