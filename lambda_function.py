@@ -1056,17 +1056,20 @@ def lambda_handler(event, context):
                 margin-bottom: 20px;
             }}
             .company-btn {{
-                background-color: #f0f0f0;
-                border: 1px solid #ddd;
+                background-color: #ffffff;
+                border: 1px solid #b8c2cc;
+                color: var(--ink);
+                font-weight: 600;
                 padding: 7px 14px;
                 margin: 3px;
                 border-radius: 5px;
-                font-size: 14px;
+                font-size: 15px;
                 cursor: pointer;
-                transition: background-color 0.3s, color 0.3s;
+                transition: background-color 0.3s, color 0.3s, border-color 0.3s;
             }}
             .company-btn:hover {{
-                background-color: #e0e0e0;
+                background-color: #eef2f6;
+                border-color: #7d8b99;
             }}
             .company-btn.active {{
                 background-color: var(--accent, #3d5a73); /* selected: brand accent */
