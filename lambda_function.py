@@ -1580,6 +1580,44 @@ def lambda_handler(event, context):
                 updateDealCount();
             }}
 
+            // Deep-link support: ?company=NAME&side=bid|offer
+            document.addEventListener('DOMContentLoaded', function () {{
+                var dlParams = new URLSearchParams(window.location.search);
+                var dlCompany = dlParams.get('company');
+                var dlSide = (dlParams.get('side') || '').toLowerCase();
+                var dlTouched = false;
+
+                if (dlSide === 'bid' || dlSide === 'offer') {{
+                    var dlBuyBox = document.getElementById('buyFilter');
+                    var dlSellBox = document.getElementById('sellFilter');
+                    if (dlBuyBox && dlSellBox) {{
+                        dlBuyBox.checked = (dlSide === 'bid');
+                        dlSellBox.checked = (dlSide === 'offer');
+                        dlTouched = true;
+                    }}
+                }}
+
+                if (dlCompany) {{
+                    var dlBtn = document.getElementById(dlCompany);
+                    if (dlBtn) {{
+                        var dlHidden = document.getElementById('nonHighlightedCompanies');
+                        if (dlHidden && dlHidden.contains(dlBtn) && dlHidden.style.display === 'none') {{
+                            toggleNonHighlighted();
+                        }}
+                        if (selectedCompanies.indexOf(dlCompany) === -1) {{
+                            toggleCompanyFilter(dlCompany);
+                            dlTouched = false;
+                        }}
+                        dlBtn.scrollIntoView({{block: 'center', behavior: 'smooth'}});
+                    }}
+                }}
+
+                if (dlTouched) {{
+                    filterTable();
+                    updateDealCount();
+                }}
+            }});
+
             document.addEventListener('DOMContentLoaded', function () {{
                     function getCookie(name) {{
                         const value = `; ${{document.cookie}}`;
