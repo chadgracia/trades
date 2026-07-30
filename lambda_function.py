@@ -159,10 +159,10 @@ def _load_directory_companies():
         s3 = boto3.client('s3')
         obj = s3.get_object(Bucket='full-pipeline-cache', Key='directory_companies.json')
         data = json.loads(obj['Body'].read().decode('utf-8'))
-        return data.get('highlight', []), data.get('list', [])
+        return data.get('highlight', []), data.get('list', []), data.get('pricing', {})
     except Exception as e:
         logger.error(f"Directory companies load failed (non-fatal): {e}")
-        return [], []
+        return [], [], {}
 
 
 def _call_claude_for_matching_ids(query, deals):
@@ -737,6 +737,35 @@ def lambda_handler(event, context):
     # suppressed on subsequent visits via the cookie the client-side JS
     # already checks).
     query_params = event.get('queryStringParameters') or {}
+
+    # TEMP DIAGNOSTIC ROUTE — remove after Explore Similar Companies is built.
+    if query_params.get('industries') and query_params.get('admin_key') == 'JK8h5Pq2L9aZ7rT3mN6bX':
+        _diag_deals = _load_deals_from_s3()
+        _diag_rows = []
+        _diag_seen = set()
+        for _diag_d in _diag_deals:
+            _diag_co = _diag_d.get('company')
+            if _diag_co in _diag_seen:
+                continue
+            _diag_seen.add(_diag_co)
+            _diag_rows.append({'company': _diag_co, 'company_industry': _diag_d.get('company_industry')})
+        _diag_rows.sort(key=lambda r: (r['company'] or '').lower())
+        return {'statusCode': 200,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({'count': len(_diag_rows), 'companies': _diag_rows}, indent=2)}
+
+    # TEMP TEST ROUTE — remove after web-bid testing.
+    if query_params.get('mint'):
+        _mint_email = _read_identity_email(event)
+        if not _mint_email:
+            return {'statusCode': 200, 'headers': {'Content-Type': 'text/html'},
+                    'body': '<p style="font-family:sans-serif;padding:40px">Not logged in. Open the trades page, sign in, then reload this ?mint=1 URL.</p>'}
+        _mint_tok = _make_handoff_token(_mint_email)
+        _wb = 'https://7u6sphgup5gjuywcvpuwzhruiq0asgdz.lambda-url.us-east-1.on.aws'
+        _mint_link = f"{_wb}/?bid=138490563&name=Positron&sso={urllib.parse.quote(_mint_tok, safe='')}"
+        return {'statusCode': 200, 'headers': {'Content-Type': 'text/html'},
+                'body': f'<p style="font-family:sans-serif;padding:40px">Logged in as {_mint_email}.<br><br><a href="{_mint_link}">Open web-bid test link (Positron)</a></p>'}
+
     if query_params.get('code'):
         clean_path = (
             event.get('rawPath')
@@ -785,13 +814,34 @@ def lambda_handler(event, context):
 
     # Merge in Directory-flagged companies (from directory_companies.json). These may
     # have NO deals at all (demand-only names) and still appear as grid buttons.
-    dir_highlight_names, dir_list_names = _load_directory_companies()
+    dir_highlight_names, dir_list_names, dir_pricing = _load_directory_companies()
     for nm in dir_highlight_names:
         highlighted_set.add(nm)
         non_highlighted_set.discard(nm)   # Highlight wins if also present elsewhere
     for nm in dir_list_names:
         if nm not in highlighted_set:     # don't demote a highlighted company
             non_highlighted_set.add(nm)
+
+    # Companies that have ANY deal in the current book (buy or sell).
+    _companies_with_deals = {deal['company'] for deal in deals if deal['company']}
+    # Deal-less companies route to the web-bid form instead of filtering.
+    _dealless_names = (highlighted_set | non_highlighted_set) - _companies_with_deals
+    # name -> company_id from the directory pricing map.
+    _name_to_id = {v.get('name'): cid for cid, v in dir_pricing.items() if v.get('name')}
+    # Mint one handoff token for the logged-in user (None if not logged in).
+    _wb_email = _read_identity_email(event)
+    _wb_token = _make_handoff_token(_wb_email) if _wb_email else None
+    _WEB_BID_URL = 'https://7u6sphgup5gjuywcvpuwzhruiq0asgdz.lambda-url.us-east-1.on.aws'
+
+    def _company_btn(company):
+        # Deal-less company with a known id -> link to web-bid; else default filter.
+        cid = _name_to_id.get(company)
+        if company in _dealless_names and cid:
+            href = f"{_WEB_BID_URL}/?bid={urllib.parse.quote(str(cid))}&name={urllib.parse.quote(company)}"
+            if _wb_token:
+                href += f"&sso={urllib.parse.quote(_wb_token, safe='')}"
+            return f"<button class='company-btn' id=\"{company}\" onclick=\"window.location.href='{href}'\">{company}</button>"
+        return f"<button class='company-btn' id=\"{company}\" onclick=\"toggleCompanyFilter('{company}')\">{company}</button>"
 
     highlighted_companies = sorted(highlighted_set)
     non_highlighted_companies = sorted(non_highlighted_set)
@@ -848,15 +898,9 @@ def lambda_handler(event, context):
         """
 
     # Create buttons for companies
-    highlighted_company_buttons = " ".join([
-        f"<button class='company-btn' id=\"{company}\" onclick=\"toggleCompanyFilter('{company}')\">{company}</button>"
-        for company in highlighted_companies
-    ])
+    highlighted_company_buttons = " ".join([_company_btn(company) for company in highlighted_companies])
 
-    non_highlighted_company_buttons = " ".join([
-        f"<button class='company-btn' id=\"{company}\" onclick=\"toggleCompanyFilter('{company}')\">{company}</button>"
-        for company in non_highlighted_companies
-    ])
+    non_highlighted_company_buttons = " ".join([_company_btn(company) for company in non_highlighted_companies])
 
 
     portfolio_btn = _portfolio_button_html(event)
@@ -885,6 +929,34 @@ def lambda_handler(event, context):
                 border-radius: 5px;
                 margin-bottom: 20px;
                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }}
+            .title-row {{
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 24px;
+                flex-wrap: wrap;
+                margin-bottom: 4px;
+            }}
+            .title-row h1 {{
+                margin: 0;
+            }}
+            .title-row .nl-search-container {{
+                background: none;
+                box-shadow: none;
+                padding: 0;
+                margin-bottom: 0;
+                margin-top: 8px;
+                flex: 0 1 400px;
+                min-width: 260px;
+            }}
+            .title-row .nl-search-btn {{
+                margin-bottom: 0;
+                padding: 10px 16px;
+            }}
+            .title-row .nl-search-status {{
+                min-height: 0;
+                margin-top: 4px;
             }}
             .filter-section {{
                 display: flex;
@@ -1028,16 +1100,20 @@ def lambda_handler(event, context):
                 margin-bottom: 20px;
             }}
             .company-btn {{
-                background-color: #f0f0f0;
-                border: 1px solid #ddd;
-                padding: 5px 10px;
-                margin: 2px;
-                border-radius: 3px;
+                background-color: #ffffff;
+                border: 1px solid #b8c2cc;
+                color: var(--ink);
+                font-weight: 600;
+                padding: 7px 14px;
+                margin: 3px;
+                border-radius: 5px;
+                font-size: 15px;
                 cursor: pointer;
-                transition: background-color 0.3s, color 0.3s;
+                transition: background-color 0.3s, color 0.3s, border-color 0.3s;
             }}
             .company-btn:hover {{
-                background-color: #e0e0e0;
+                background-color: #eef2f6;
+                border-color: #7d8b99;
             }}
             .company-btn.active {{
                 background-color: var(--accent, #3d5a73); /* selected: brand accent */
@@ -1365,7 +1441,7 @@ def lambda_handler(event, context):
                 }})
                 .finally(function() {{
                     btn.disabled = false;
-                    btn.textContent = 'Search';
+                    btn.textContent = 'Go';
                 }});
             }}
 
@@ -1503,6 +1579,44 @@ def lambda_handler(event, context):
                 }}
                 updateDealCount();
             }}
+
+            // Deep-link support: ?company=NAME&side=bid|offer
+            document.addEventListener('DOMContentLoaded', function () {{
+                var dlParams = new URLSearchParams(window.location.search);
+                var dlCompany = dlParams.get('company');
+                var dlSide = (dlParams.get('side') || '').toLowerCase();
+                var dlTouched = false;
+
+                if (dlSide === 'bid' || dlSide === 'offer') {{
+                    var dlBuyBox = document.getElementById('buyFilter');
+                    var dlSellBox = document.getElementById('sellFilter');
+                    if (dlBuyBox && dlSellBox) {{
+                        dlBuyBox.checked = (dlSide === 'bid');
+                        dlSellBox.checked = (dlSide === 'offer');
+                        dlTouched = true;
+                    }}
+                }}
+
+                if (dlCompany) {{
+                    var dlBtn = document.getElementById(dlCompany);
+                    if (dlBtn) {{
+                        var dlHidden = document.getElementById('nonHighlightedCompanies');
+                        if (dlHidden && dlHidden.contains(dlBtn) && dlHidden.style.display === 'none') {{
+                            toggleNonHighlighted();
+                        }}
+                        if (selectedCompanies.indexOf(dlCompany) === -1) {{
+                            toggleCompanyFilter(dlCompany);
+                            dlTouched = false;
+                        }}
+                        dlBtn.scrollIntoView({{block: 'center', behavior: 'smooth'}});
+                    }}
+                }}
+
+                if (dlTouched) {{
+                    filterTable();
+                    updateDealCount();
+                }}
+            }});
 
             document.addEventListener('DOMContentLoaded', function () {{
                     function getCookie(name) {{
@@ -1695,7 +1809,17 @@ def lambda_handler(event, context):
         </div>
 
         <div class="header">
-            <h1>Indications for Accredited Investors <span id="dealCount" class="deal-count"></span></h1>
+            <div class="title-row">
+                <h1>Indications for Accredited Investors <span id="dealCount" class="deal-count"></span></h1>
+                <div class="nl-search-container">
+                    <div class="nl-search-row">
+                        <input type="text" id="nlSearchInput" class="nl-search-input" placeholder="Search a company, or ask a question" onkeydown="if(event.key==='Enter'){{performSearch()}}">
+                        <button id="nlSearchBtn" class="nl-search-btn btn" onclick="performSearch()">Go</button>
+                        <button id="nlClearBtn" class="nl-clear-btn" onclick="clearSearch()">Clear</button>
+                    </div>
+                    <div id="nlSearchStatus" class="nl-search-status"></div>
+                </div>
+            </div>
             <p class="subtitle">Search our full book of live private securities opportunities.</p>
             <div class="filter-section">
                 <div class="filter-group">
@@ -1740,16 +1864,6 @@ def lambda_handler(event, context):
                 </div>
             </div>
             </div>
-        </div>
-
-        <p style="margin-bottom: 10px; font-size: 15px; color: #222; font-weight: 500;">What are you looking for today? Try <strong>&ldquo;single layer Anthropic offers&rdquo;</strong> or <strong>&ldquo;direct robotics deals&rdquo;</strong></p>
-        <div class="nl-search-container">
-            <div class="nl-search-row">
-                <input type="text" id="nlSearchInput" class="nl-search-input" placeholder="Ask a question about the deals (e.g., 'SpaceX offers under $50M ticket size')" onkeydown="if(event.key==='Enter'){{performSearch()}}">
-                <button id="nlSearchBtn" class="nl-search-btn btn" onclick="performSearch()">Search</button>
-                <button id="nlClearBtn" class="nl-clear-btn" onclick="clearSearch()">Clear search</button>
-            </div>
-            <div id="nlSearchStatus" class="nl-search-status"></div>
         </div>
 
         <div class="company-filter">
