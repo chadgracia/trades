@@ -1696,6 +1696,14 @@ def lambda_handler(event, context):
             window.jsPDF = window.jspdf.jsPDF;
 
             function downloadPDF() {{
+                if (!window.jspdf || !window.jspdf.jsPDF) {{
+                    alert('PDF library (jspdf) did not load.');
+                    return;
+                }}
+                if (!window.jspdf.jsPDF.API || !window.jspdf.jsPDF.API.autoTable) {{
+                    alert('PDF plugin (autoTable) did not load.');
+                    return;
+                }}
                 const doc = new jsPDF('l', 'pt', 'a4'); // Landscape mode, points, A4 size
                 const pageWidth = doc.internal.pageSize.width;
                 const margin = 10; // Reduce margin to maximize width
@@ -1818,6 +1826,7 @@ def lambda_handler(event, context):
                     
                 }} catch (error) {{
                     console.error("Error generating PDF:", error);
+                    alert("PDF error: " + (error && error.message ? error.message : error));
                 }}
             }}
 
