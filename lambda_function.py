@@ -1263,6 +1263,30 @@ def lambda_handler(event, context):
                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
                 margin-bottom: 15px; /* Add space below the company buttons */
             }}
+            .table-toolbar {{
+                display: flex;
+                justify-content: flex-end;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin: 0 0 8px 0;
+            }}
+            .toolbar-btn {{
+                font-family: var(--font-ui);
+                background: transparent;
+                border: 1px solid var(--border-strong);
+                color: var(--ink);
+                font-size: 13px;
+                font-weight: 500;
+                padding: 6px 14px;
+                border-radius: 999px;
+                cursor: pointer;
+                transition: background-color 0.15s, border-color 0.15s;
+            }}
+            .toolbar-btn:hover {{
+                background-color: rgba(0,0,0,0.04);
+                border-color: #7d8b99;
+            }}
             .company-filter > strong {{
                 display: block;
                 margin-bottom: 8px;
@@ -1834,8 +1858,6 @@ def lambda_handler(event, context):
             <button class="btn" onclick="window.location.href='https://www.graciagroup.com/'">Gracia Group Home</button>
             <button class="btn" onclick="window.location.href='https://pre-ipo.graciagroup.com/'">Insights</button>
             <button class="btn" onclick="window.location.href='https://6dzzw7nvdqtulz3hrtux3ofr440jbjho.lambda-url.us-east-1.on.aws/'">Create Watchlist</button>
-            <button class="btn" onclick="downloadPDF()">Download PDF</button>
-            <button class="btn" onclick="location.reload()">Refresh</button>
             {portfolio_btn}
         </div>
 
@@ -1910,6 +1932,11 @@ def lambda_handler(event, context):
                 {non_highlighted_company_buttons}
             </div>
 
+        </div>
+
+        <div class="table-toolbar">
+            <button class="toolbar-btn" onclick="location.reload()">Refresh</button>
+            <button class="toolbar-btn" onclick="downloadPDF()">Download PDF</button>
         </div>
 
         <table id="dealsTable">
