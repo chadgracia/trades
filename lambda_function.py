@@ -979,6 +979,8 @@ def lambda_handler(event, context):
             .filter-label {{
                 font-weight: bold;
                 margin-right: 5px;
+                position: relative;
+                top: -1px;
             }}
             .fund-group {{
                 display: inline-flex;
