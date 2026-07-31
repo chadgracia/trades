@@ -1935,8 +1935,8 @@ def lambda_handler(event, context):
         </div>
 
         <div class="table-toolbar">
-            <button class="toolbar-btn" onclick="location.reload()">Refresh</button>
-            <button class="toolbar-btn" onclick="downloadPDF()">Download PDF</button>
+            <button class="toolbar-btn" onclick="location.reload()">Show All</button>
+            <button class="toolbar-btn" onclick="downloadPDF()">Download Selected Deals</button>
         </div>
 
         <table id="dealsTable">
