@@ -1866,7 +1866,7 @@ def lambda_handler(event, context):
         <div class="ticket-size-filter">
             <div class="filter-row">
                 <div class="slider-group">
-                    <strong>Ticket Size:</strong>
+                    <span class="filter-label">Ticket Size:</span>
                     <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="0" data-hi="250000" checked onchange="filterTable()"> &lt;$250K</label>
                     <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="250000" data-hi="500000" checked onchange="filterTable()"> $250K–$500K</label>
                     <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="500000" data-hi="1000000" checked onchange="filterTable()"> $500K–$1M</label>
