@@ -738,6 +738,22 @@ def lambda_handler(event, context):
     # already checks).
     query_params = event.get('queryStringParameters') or {}
 
+    # TEMP DIAGNOSTIC ROUTE — remove after Explore Similar Companies is built.
+    if query_params.get('industries') and query_params.get('admin_key') == 'JK8h5Pq2L9aZ7rT3mN6bX':
+        _diag_deals = _load_deals_from_s3()
+        _diag_rows = []
+        _diag_seen = set()
+        for _diag_d in _diag_deals:
+            _diag_co = _diag_d.get('company')
+            if _diag_co in _diag_seen:
+                continue
+            _diag_seen.add(_diag_co)
+            _diag_rows.append({'company': _diag_co, 'company_industry': _diag_d.get('company_industry')})
+        _diag_rows.sort(key=lambda r: (r['company'] or '').lower())
+        return {'statusCode': 200,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({'count': len(_diag_rows), 'companies': _diag_rows}, indent=2)}
+
     # TEMP TEST ROUTE — remove after web-bid testing.
     if query_params.get('mint'):
         _mint_email = _read_identity_email(event)
