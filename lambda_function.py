@@ -1772,8 +1772,8 @@ def lambda_handler(event, context):
 
                     const columns = [
                         'Deal ID', 'Type', 'Company', 'Structure', 'Net', 'Gross', 
-                        'Min Deal Size', 'Max Deal Size', 'Last Round PPS',
-                        'Last Round Val (Bn)', 'Man. Fee', 'Carry', 'Updated'
+                        'Min Deal Size', 'Max Deal Size', 'LR PPS',
+                        'LR Val (Bn)', 'Man. Fee', 'Carry', 'Updated'
                     ];
                     
                     doc.autoTable({{
@@ -1912,8 +1912,8 @@ def lambda_handler(event, context):
                     <th>Gross</th>
                     <th>Min Deal Size</th>
                     <th>Max Deal Size</th>
-                    <th>Last Round PPS</th>
-                    <th>Last Round Val (Bn)</th>
+                    <th title="Last round price per share">LR PPS</th>
+                    <th title="Last round valuation, in $ billions">LR Val (Bn)</th>
                     <th>Man. Fee</th>
                     <th>Carry</th>
                     <th>Updated</th>
