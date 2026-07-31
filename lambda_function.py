@@ -1100,23 +1100,22 @@ def lambda_handler(event, context):
                 margin-bottom: 20px;
             }}
             .company-btn {{
-                background-color: #ffffff;
-                border: 1px solid #b8c2cc;
-                color: var(--ink);
-                font-weight: 600;
-                padding: 7px 14px;
+                background-color: #D8E7F7;
+                border: none;
+                color: #0C447C;
+                font-weight: 400;
+                padding: 6px 14px;
                 margin: 3px;
-                border-radius: 5px;
-                font-size: 15px;
+                border-radius: 999px;
+                font-size: 14px;
                 cursor: pointer;
-                transition: background-color 0.3s, color 0.3s, border-color 0.3s;
+                transition: background-color 0.15s, color 0.15s;
             }}
             .company-btn:hover {{
-                background-color: #eef2f6;
-                border-color: #7d8b99;
+                background-color: #C2D9F2;
             }}
             .company-btn.active {{
-                background-color: var(--accent, #3d5a73); /* selected: brand accent */
+                background-color: #44576B; /* selected */
                 color: white; /* Keep text readable */
             }}
 
