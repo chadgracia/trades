@@ -1772,7 +1772,7 @@ def lambda_handler(event, context):
 
                     const columns = [
                         'Deal ID', 'Type', 'Company', 'Structure', 'Net', 'Gross', 
-                        'Min Deal Size', 'Max Deal Size', 'LR PPS',
+                        'Min Size', 'Max Size', 'LR PPS',
                         'LR Val (Bn)', 'Man. Fee', 'Carry', 'Updated'
                     ];
                     
@@ -1910,8 +1910,8 @@ def lambda_handler(event, context):
                     <th>Structure</th>
                     <th>Net</th>
                     <th>Gross</th>
-                    <th>Min Deal Size</th>
-                    <th>Max Deal Size</th>
+                    <th title="Minimum allocation size">Min Size</th>
+                    <th title="Maximum allocation size">Max Size</th>
                     <th title="Last round price per share">LR PPS</th>
                     <th title="Last round valuation, in $ billions">LR Val (Bn)</th>
                     <th>Man. Fee</th>
