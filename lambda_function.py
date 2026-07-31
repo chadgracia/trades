@@ -1100,7 +1100,7 @@ def lambda_handler(event, context):
                 margin-bottom: 20px;
             }}
             .company-btn {{
-                background-color: #D1DBE6;
+                background-color: #CCDBEA;
                 border: none;
                 color: var(--ink);
                 font-weight: 500;
@@ -1112,7 +1112,10 @@ def lambda_handler(event, context):
                 transition: background-color 0.15s, color 0.15s;
             }}
             .company-btn:hover {{
-                background-color: #C3D1DF;
+                background-color: #B7CBE1;
+            }}
+            #highlightedCompanies, #nonHighlightedCompanies {{
+                margin-left: -3px;
             }}
             .company-btn.active {{
                 background-color: #44576B; /* selected */
