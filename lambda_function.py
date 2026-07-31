@@ -1273,9 +1273,9 @@ def lambda_handler(event, context):
             }}
             .toolbar-btn {{
                 font-family: var(--font-ui);
-                background: transparent;
-                border: 1px solid var(--border-strong);
-                color: var(--ink);
+                background: var(--pos, #1f7a4d);
+                border: 1px solid var(--pos, #1f7a4d);
+                color: #fff;
                 font-size: 13px;
                 font-weight: 500;
                 padding: 6px 14px;
@@ -1284,8 +1284,16 @@ def lambda_handler(event, context):
                 transition: background-color 0.15s, border-color 0.15s;
             }}
             .toolbar-btn:hover {{
-                background-color: rgba(0,0,0,0.04);
-                border-color: #7d8b99;
+                background-color: #185f3b;
+                border-color: #185f3b;
+            }}
+            .toolbar-btn.alt {{
+                background: #2e9d6a;
+                border-color: #2e9d6a;
+            }}
+            .toolbar-btn.alt:hover {{
+                background-color: #237a52;
+                border-color: #237a52;
             }}
             .company-filter > strong {{
                 display: block;
@@ -1935,7 +1943,7 @@ def lambda_handler(event, context):
         </div>
 
         <div class="table-toolbar">
-            <button class="toolbar-btn" onclick="location.reload()">Refresh</button>
+            <button class="toolbar-btn alt" onclick="location.reload()">Refresh</button>
             <button class="toolbar-btn" onclick="downloadPDF()">Download PDF</button>
         </div>
 
