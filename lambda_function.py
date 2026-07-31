@@ -1770,7 +1770,7 @@ def lambda_handler(event, context):
                         .filter(row => row.style.display !== 'none')
                         .map(row => Array.from(row.cells).map((cell, i) =>
                             i === 12
-                                ? cell.innerText.replace(/[^\x00-\x7F]/g, '').trim()
+                                ? cell.innerText.split('\n')[0].trim()
                                 : cell.innerText
                         ));
 
