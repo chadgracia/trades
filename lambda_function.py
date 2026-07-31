@@ -1768,7 +1768,11 @@ def lambda_handler(event, context):
 
                     const visibleRows = Array.from(document.querySelectorAll('.deal-row'))
                         .filter(row => row.style.display !== 'none')
-                        .map(row => Array.from(row.cells).map(cell => cell.innerText));
+                        .map(row => Array.from(row.cells).map((cell, i) =>
+                            i === 12
+                                ? cell.innerText.replace(/[^\x00-\x7F]/g, '').trim()
+                                : cell.innerText
+                        ));
 
                     const columns = [
                         'Deal ID', 'Type', 'Company', 'Structure', 'Net', 'Gross', 
