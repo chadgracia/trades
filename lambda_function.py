@@ -1100,10 +1100,10 @@ def lambda_handler(event, context):
                 margin-bottom: 20px;
             }}
             .company-btn {{
-                background-color: #D8E7F7;
+                background-color: #D1DBE6;
                 border: none;
-                color: #0C447C;
-                font-weight: 400;
+                color: var(--ink);
+                font-weight: 500;
                 padding: 6px 14px;
                 margin: 3px;
                 border-radius: 999px;
@@ -1112,7 +1112,7 @@ def lambda_handler(event, context):
                 transition: background-color 0.15s, color 0.15s;
             }}
             .company-btn:hover {{
-                background-color: #C2D9F2;
+                background-color: #C3D1DF;
             }}
             .company-btn.active {{
                 background-color: #44576B; /* selected */
@@ -1251,7 +1251,23 @@ def lambda_handler(event, context):
                 max-width: 300px;
             }}
             .company-filter {{
+                background-color: #f8f9fa;
+                padding: 14px 20px;
+                border-radius: 5px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
                 margin-bottom: 15px; /* Add space below the company buttons */
+            }}
+            .company-filter > strong {{
+                display: block;
+                margin-bottom: 8px;
+            }}
+            .company-btn.show-all-btn {{
+                background-color: transparent;
+                border: 1px solid var(--border-strong);
+                color: var(--text-secondary);
+            }}
+            .company-btn.show-all-btn:hover {{
+                background-color: rgba(0,0,0,0.04);
             }}
 
             .toggle-btn {{
@@ -1475,7 +1491,7 @@ def lambda_handler(event, context):
 
             function toggleNonHighlighted() {{
                 var section = document.getElementById("nonHighlightedCompanies");
-                var button = document.querySelector(".btn.secondary");
+                var button = document.querySelector(".show-all-btn");
 
                 if (section.style.display === "none") {{
                     section.style.display = "block";
@@ -1871,7 +1887,7 @@ def lambda_handler(event, context):
             <!-- Always visible: Highlighted Companies -->
             <div id="highlightedCompanies">
                 {highlighted_company_buttons}
-                <button class="btn secondary" onclick="toggleNonHighlighted()">Show All Companies ▼</button>
+                <button class="company-btn show-all-btn" onclick="toggleNonHighlighted()">Show All Companies ▼</button>
             </div>
 
             <div id="nonHighlightedCompanies" style="display: none;">
