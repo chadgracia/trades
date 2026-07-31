@@ -979,8 +979,9 @@ def lambda_handler(event, context):
             .filter-label {{
                 font-weight: bold;
                 margin-right: 5px;
-                position: relative;
-                top: -1px;
+            }}
+            .filter-label, .checkbox-label {{
+                line-height: 20px;
             }}
             .fund-group {{
                 display: inline-flex;
@@ -1831,6 +1832,7 @@ def lambda_handler(event, context):
     <body>
         <div class="topbar">
             <button class="btn" onclick="window.location.href='https://www.graciagroup.com/'">Gracia Group Home</button>
+            <button class="btn" onclick="window.location.href='https://pre-ipo.graciagroup.com/'">Insights</button>
             <button class="btn" onclick="window.location.href='https://6dzzw7nvdqtulz3hrtux3ofr440jbjho.lambda-url.us-east-1.on.aws/'">Create Watchlist</button>
             <button class="btn" onclick="downloadPDF()">Download PDF</button>
             <button class="btn" onclick="location.reload()">Refresh</button>
