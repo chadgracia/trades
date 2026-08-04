@@ -738,6 +738,24 @@ def lambda_handler(event, context):
     # already checks).
     query_params = event.get('queryStringParameters') or {}
 
+    # TEMP DIAGNOSTIC ROUTE — inspect the directory pricing map.
+    if query_params.get('pricing') and query_params.get('admin_key') == 'JK8h5Pq2L9aZ7rT3mN6bX':
+        _pd_h, _pd_l, _pd_pricing = _load_directory_companies()
+        _pd_want = (query_params.get('pricing') or '').strip().lower()
+        _pd_hit = None
+        for _pd_cid, _pd_e in (_pd_pricing or {}).items():
+            if (_pd_e.get('name') or '').strip().lower() == _pd_want:
+                _pd_hit = {'company_id': _pd_cid, 'entry': _pd_e}
+                break
+        _pd_sample = None
+        for _pd_cid, _pd_e in list((_pd_pricing or {}).items())[:1]:
+            _pd_sample = {'company_id': _pd_cid, 'entry': _pd_e}
+        return {'statusCode': 200,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({'total_priced': len(_pd_pricing or {}),
+                                    'match': _pd_hit,
+                                    'sample_entry': _pd_sample}, indent=2)}
+
     # TEMP DIAGNOSTIC ROUTE — remove after Explore Similar Companies is built.
     if query_params.get('industries') and query_params.get('admin_key') == 'JK8h5Pq2L9aZ7rT3mN6bX':
         _diag_deals = _load_deals_from_s3()
