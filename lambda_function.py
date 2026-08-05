@@ -120,7 +120,7 @@ def _portfolio_button_html(event):
     href = f"{PORTFOLIO_URL}/?sso={urllib.parse.quote(token, safe='')}"
     return (
         f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
-        'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);margin-left:auto;">Your Portfolio</a>'
+        'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);margin-left:auto;">Your Watchlist</a>'
     )
 
 
@@ -604,7 +604,7 @@ def _apply_filters(deals, filters):
             # ascending wants None to be "largest", descending wants it
             # "smallest" (which becomes last after reverse).
             if field == 'updated':
-                missing_sentinel = '' if reverse else '\uffff'
+                missing_sentinel = '' if reverse else '￿'
                 def _key(d):
                     v = d.get(field)
                     return v if v else missing_sentinel
@@ -738,24 +738,6 @@ def lambda_handler(event, context):
     # already checks).
     query_params = event.get('queryStringParameters') or {}
 
-    # TEMP DIAGNOSTIC ROUTE — inspect the directory pricing map.
-    if query_params.get('pricing') and query_params.get('admin_key') == 'JK8h5Pq2L9aZ7rT3mN6bX':
-        _pd_h, _pd_l, _pd_pricing = _load_directory_companies()
-        _pd_want = (query_params.get('pricing') or '').strip().lower()
-        _pd_hit = None
-        for _pd_cid, _pd_e in (_pd_pricing or {}).items():
-            if (_pd_e.get('name') or '').strip().lower() == _pd_want:
-                _pd_hit = {'company_id': _pd_cid, 'entry': _pd_e}
-                break
-        _pd_sample = None
-        for _pd_cid, _pd_e in list((_pd_pricing or {}).items())[:1]:
-            _pd_sample = {'company_id': _pd_cid, 'entry': _pd_e}
-        return {'statusCode': 200,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'total_priced': len(_pd_pricing or {}),
-                                    'match': _pd_hit,
-                                    'sample_entry': _pd_sample}, indent=2)}
-
     # TEMP DIAGNOSTIC ROUTE — remove after Explore Similar Companies is built.
     if query_params.get('industries') and query_params.get('admin_key') == 'JK8h5Pq2L9aZ7rT3mN6bX':
         _diag_deals = _load_deals_from_s3()
@@ -877,7 +859,7 @@ def lambda_handler(event, context):
             "Confirm": "Will confirm after bid/ask"
         }
         
-        stage_html = f'<span class="stage-cell" data-tooltip="{stage_tooltips[deal["stage"]]}">{deal["stage"]}</span>'
+        stage_html = f'<span class="stage-cell" data-tooltip="{stage_tooltips[deal["stage"]]}">{{deal["stage"]}}</span>'
         
         company_cell = deal['company']
 
@@ -997,9 +979,8 @@ def lambda_handler(event, context):
             .filter-label {{
                 font-weight: bold;
                 margin-right: 5px;
-            }}
-            .filter-label, .checkbox-label {{
-                line-height: 20px;
+                position: relative;
+                top: -1px;
             }}
             .fund-group {{
                 display: inline-flex;
@@ -1280,30 +1261,6 @@ def lambda_handler(event, context):
                 border-radius: 5px;
                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
                 margin-bottom: 15px; /* Add space below the company buttons */
-            }}
-            .table-toolbar {{
-                display: flex;
-                justify-content: flex-end;
-                align-items: center;
-                flex-wrap: wrap;
-                gap: 8px;
-                margin: 0 0 8px 0;
-            }}
-            .toolbar-btn {{
-                font-family: var(--font-ui);
-                background: #2e9d6a;
-                border: 1px solid #2e9d6a;
-                color: #fff;
-                font-size: 13px;
-                font-weight: 500;
-                padding: 6px 14px;
-                border-radius: 999px;
-                cursor: pointer;
-                transition: background-color 0.15s, border-color 0.15s;
-            }}
-            .toolbar-btn:hover {{
-                background-color: #237a52;
-                border-color: #237a52;
             }}
             .company-filter > strong {{
                 display: block;
@@ -1739,14 +1696,6 @@ def lambda_handler(event, context):
             window.jsPDF = window.jspdf.jsPDF;
 
             function downloadPDF() {{
-                if (!window.jspdf || !window.jspdf.jsPDF) {{
-                    alert('PDF library (jspdf) did not load.');
-                    return;
-                }}
-                if (!window.jspdf.jsPDF.API || !window.jspdf.jsPDF.API.autoTable) {{
-                    alert('PDF plugin (autoTable) did not load.');
-                    return;
-                }}
                 const doc = new jsPDF('l', 'pt', 'a4'); // Landscape mode, points, A4 size
                 const pageWidth = doc.internal.pageSize.width;
                 const margin = 10; // Reduce margin to maximize width
@@ -1819,7 +1768,11 @@ def lambda_handler(event, context):
 
                     const visibleRows = Array.from(document.querySelectorAll('.deal-row'))
                         .filter(row => row.style.display !== 'none')
-                        .map(row => Array.from(row.cells).map(cell => cell.innerText));
+                        .map(row => Array.from(row.cells).map((cell, i) =>
+                            i === 12
+                                ? cell.innerText.split('\n')[0].trim()
+                                : cell.innerText
+                        ));
 
                     const columns = [
                         'Deal ID', 'Type', 'Company', 'Structure', 'Net', 'Gross', 
@@ -1865,7 +1818,6 @@ def lambda_handler(event, context):
                     
                 }} catch (error) {{
                     console.error("Error generating PDF:", error);
-                    alert("PDF error: " + (error && error.message ? error.message : error));
                 }}
             }}
 
@@ -1874,8 +1826,8 @@ def lambda_handler(event, context):
     <body>
         <div class="topbar">
             <button class="btn" onclick="window.location.href='https://www.graciagroup.com/'">Gracia Group Home</button>
-            <button class="btn" onclick="window.location.href='https://pre-ipo.graciagroup.com/'">Insights</button>
-            <button class="btn" onclick="window.location.href='https://6dzzw7nvdqtulz3hrtux3ofr440jbjho.lambda-url.us-east-1.on.aws/'">Create Watchlist</button>
+            <button class="btn" onclick="downloadPDF()">Download PDF</button>
+            <button class="btn" onclick="location.reload()">Refresh</button>
             {portfolio_btn}
         </div>
 
@@ -1952,11 +1904,6 @@ def lambda_handler(event, context):
 
         </div>
 
-        <div class="table-toolbar">
-            <button class="toolbar-btn" onclick="location.reload()">Show All</button>
-            <button class="toolbar-btn" onclick="downloadPDF()">Download Selected Deals</button>
-        </div>
-
         <table id="dealsTable">
             <thead>
                 <tr>
@@ -1981,8 +1928,8 @@ def lambda_handler(event, context):
         </table>
         
         <div id="disclaimer">
-            <p>DISCLOSURE: Chad Gracia ("Gracia") is a principal of The Gracia Group, LLC ("Gracia Group") and a registered agent of Rainmaker Securities, LLC ("RMS"). Gracia Group is a consulting firm and outside business activity of Gracia. Gracia Group is not affiliated with RMS. Rainmaker Securities, LLC ("RMS") is a FINRA registered broker-dealer and SIPC member. Find this broker-dealer and its agents on BrokerCheck. Our relationship summary can be found on the RMS website.</p>
-            <p>RMS is engaged by its clients to make referrals to buyers or sellers of private securities ("Securities"). If such client closes a Securities transaction with a buyer or seller so referred, RMS is entitled to a success fee from the client. Such success fee may be in the form of cash or in warrants to purchase securities of the client or client's affiliate. RMS or RMS representatives may hold equity in its issuer clients or in the issuers of securities purchased or sold by the parties to a transaction.</p>
+            <p>DISCLOSURE: Chad Gracia (“Gracia”) is a principal of The Gracia Group, LLC (“Gracia Group”) and a registered agent of Rainmaker Securities, LLC (“RMS”). Gracia Group is a consulting firm and outside business activity of Gracia. Gracia Group is not affiliated with RMS. Rainmaker Securities, LLC (“RMS”) is a FINRA registered broker-dealer and SIPC member. Find this broker-dealer and its agents on BrokerCheck. Our relationship summary can be found on the RMS website.</p>
+            <p>RMS is engaged by its clients to make referrals to buyers or sellers of private securities (“Securities”). If such client closes a Securities transaction with a buyer or seller so referred, RMS is entitled to a success fee from the client. Such success fee may be in the form of cash or in warrants to purchase securities of the client or client's affiliate. RMS or RMS representatives may hold equity in its issuer clients or in the issuers of securities purchased or sold by the parties to a transaction.</p>
             <p>This communication is confidential and is addressed only to its intended recipient. This communication does not represent an offer or solicitation to buy or sell Securities. Such an offer must be made via definitive legal documentation by the seller of securities.</p>
             <p>Investments in the Securities are speculative and involve a high degree of risk. An investor in the Securities should have little to no need for liquidity in the foreseeable future and have sufficient finances to withstand the loss of the entire investment.</p>
             <p>RMS does not recommend the purchase or sale of Securities. Potential buyers or sellers of the Securities should seek professional counsel prior to entering into any transaction.</p>
