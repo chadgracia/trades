@@ -881,7 +881,7 @@ def lambda_handler(event, context):
 
         table_rows += f"""
         <tr class="deal-row {deal['type'].lower()} {deal['structure_class']}" data-deal-id="{deal['id']}" data-management-fee="{deal['management_fee']}" data-carry="{deal['carry']}" data-stage="{deal['stage']}" data-data-room="{deal['data_room']}" data-highlighted="{deal['highlighted']}" data-layers="{deal.get('layers') or ''}">
-            <td><a href="https://trades.graciagroup.com/deal/{deal['id']}">{deal['id']}</a></td>
+            <td><a href="https://trades.graciagroup.com/deal/{deal['id']}">{deal['id']}</a><br><button type="button" class="copy-id" data-copy-id="{deal['id']}" title="Copy deal ID" aria-label="Copy deal ID {deal['id']}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"></path></svg></button></td>
             <td>{deal['type']}</td>
             <td>{company_cell}</td>
             <td>{deal['structure']}{layer_badge_html}</td>
@@ -1052,6 +1052,42 @@ def lambda_handler(event, context):
 
             tr:hover {{
                 background-color: #f5f5f5;
+            }}
+
+            .copy-id {{
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 22px;
+                height: 22px;
+                margin-top: 5px;
+                padding: 0;
+                background-color: #fff;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                color: #6b7280;
+                cursor: pointer;
+                line-height: 0;
+            }}
+
+            .copy-id svg {{
+                width: 13px;
+                height: 13px;
+                fill: none;
+                stroke: currentColor;
+                stroke-width: 1.5;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+            }}
+
+            .copy-id:hover {{
+                border-color: var(--accent, #3d5a73);
+                color: var(--accent, #3d5a73);
+            }}
+
+            .copy-id.copied {{
+                border-color: #16a34a;
+                color: #16a34a;
             }}
 
             .stage-cell {{
@@ -1638,6 +1674,48 @@ def lambda_handler(event, context):
                 }}
             }});
 
+            var COPY_ICON_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"></path></svg>';
+            var CHECK_ICON_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8.5l3.5 3.5L13 5"></path></svg>';
+
+            function copyTextToClipboard(text) {{
+                if (navigator.clipboard && window.isSecureContext) {{
+                    return navigator.clipboard.writeText(text);
+                }}
+                return new Promise(function (resolve, reject) {{
+                    var ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.setAttribute('readonly', '');
+                    ta.style.position = 'fixed';
+                    ta.style.top = '-1000px';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    var ok = false;
+                    try {{ ok = document.execCommand('copy'); }} catch (e) {{ ok = false; }}
+                    document.body.removeChild(ta);
+                    ok ? resolve() : reject(new Error('Copy failed'));
+                }});
+            }}
+
+            document.addEventListener('click', function (event) {{
+                var btn = event.target.closest ? event.target.closest('.copy-id') : null;
+                if (!btn) return;
+                event.preventDefault();
+                var dealId = btn.getAttribute('data-copy-id');
+                copyTextToClipboard(dealId).then(function () {{
+                    btn.classList.add('copied');
+                    btn.innerHTML = CHECK_ICON_SVG;
+                    btn.title = 'Copied ' + dealId;
+                    clearTimeout(btn._copyTimer);
+                    btn._copyTimer = setTimeout(function () {{
+                        btn.classList.remove('copied');
+                        btn.innerHTML = COPY_ICON_SVG;
+                        btn.title = 'Copy deal ID';
+                    }}, 1500);
+                }}).catch(function () {{
+                    btn.title = 'Copy failed';
+                }});
+            }});
+
             document.addEventListener('DOMContentLoaded', function () {{
                     function getCookie(name) {{
                         const value = `; ${{document.cookie}}`;
@@ -1769,8 +1847,8 @@ def lambda_handler(event, context):
                     const visibleRows = Array.from(document.querySelectorAll('.deal-row'))
                         .filter(row => row.style.display !== 'none')
                         .map(row => Array.from(row.cells).map((cell, i) =>
-                            i === 12
-                                ? cell.innerText.split('\n')[0].trim()
+                            (i === 0 || i === 12)
+                                ? cell.innerText.split('\\n')[0].trim()
                                 : cell.innerText
                         ));
 
