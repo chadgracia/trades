@@ -1298,6 +1298,30 @@ def lambda_handler(event, context):
                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
                 margin-bottom: 15px; /* Add space below the company buttons */
             }}
+            .table-toolbar {{
+                display: flex;
+                justify-content: flex-end;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin: 0 0 8px 0;
+            }}
+            .toolbar-btn {{
+                font-family: var(--font-ui);
+                background: #2e9d6a;
+                border: 1px solid #2e9d6a;
+                color: #fff;
+                font-size: 13px;
+                font-weight: 500;
+                padding: 6px 14px;
+                border-radius: 999px;
+                cursor: pointer;
+                transition: background-color 0.15s, border-color 0.15s;
+            }}
+            .toolbar-btn:hover {{
+                background-color: #237a52;
+                border-color: #237a52;
+            }}
             .company-filter > strong {{
                 display: block;
                 margin-bottom: 8px;
@@ -1846,11 +1870,20 @@ def lambda_handler(event, context):
 
                     const visibleRows = Array.from(document.querySelectorAll('.deal-row'))
                         .filter(row => row.style.display !== 'none')
-                        .map(row => Array.from(row.cells).map((cell, i) =>
-                            (i === 0 || i === 12)
-                                ? cell.innerText.split('\\n')[0].trim()
-                                : cell.innerText
-                        ));
+                        .map(row => Array.from(row.cells).map((cell, i) => {{
+                            // Deal ID and Updated carry extra controls (copy
+                            // button; nudge/LOI links). Take only the leading
+                            // text so those never land in the export. Read the
+                            // first child rather than splitting innerText:
+                            // innerText collapses to textContent while the
+                            // table is display:none for signed-out visitors,
+                            // which used to leak the 🔔/✍️ glyphs through.
+                            if (i === 0 || i === 12) {{
+                                var lead = cell.firstChild ? cell.firstChild.textContent : cell.innerText;
+                                return (lead || '').trim();
+                            }}
+                            return cell.innerText;
+                        }}));
 
                     const columns = [
                         'Deal ID', 'Type', 'Company', 'Structure', 'Net', 'Gross', 
@@ -1904,8 +1937,6 @@ def lambda_handler(event, context):
     <body>
         <div class="topbar">
             <button class="btn" onclick="window.location.href='https://www.graciagroup.com/'">Gracia Group Home</button>
-            <button class="btn" onclick="downloadPDF()">Download PDF</button>
-            <button class="btn" onclick="location.reload()">Refresh</button>
             {portfolio_btn}
         </div>
 
@@ -1980,6 +2011,11 @@ def lambda_handler(event, context):
                 {non_highlighted_company_buttons}
             </div>
 
+        </div>
+
+        <div class="table-toolbar">
+            <button class="toolbar-btn" onclick="location.reload()">Show All</button>
+            <button class="toolbar-btn" onclick="downloadPDF()">Download Selected Deals</button>
         </div>
 
         <table id="dealsTable">
