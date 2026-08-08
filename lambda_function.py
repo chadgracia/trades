@@ -111,11 +111,19 @@ def _make_handoff_token(email):
     return base64.urlsafe_b64encode(f"{email}|{exp}|{sig}".encode()).decode().rstrip("=")
 
 
-def _portfolio_button_html(event):
-    """The 'Your Portfolio' button HTML if a valid gg_id is present, else ''."""
+def _portfolio_button_html(event, is_admin=False):
+    """The 'Your Watchlist' button HTML. Clients need a valid gg_id so we can mint
+    an SSO handoff; admins already hold a portfolio session on that domain, so a
+    plain link works and the button never disappears on them."""
     email = _read_identity_email(event)
     if not email:
-        return ""
+        if not is_admin:
+            return ""
+        href = PORTFOLIO_URL + "/"
+        return (
+            f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
+            'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);margin-left:auto;">Your Watchlist</a>'
+        )
     token = _make_handoff_token(email)
     href = f"{PORTFOLIO_URL}/?sso={urllib.parse.quote(token, safe='')}"
     return (
@@ -903,7 +911,12 @@ def lambda_handler(event, context):
     non_highlighted_company_buttons = " ".join([_company_btn(company) for company in non_highlighted_companies])
 
 
-    portfolio_btn = _portfolio_button_html(event)
+    # No admin boolean exists in Python here, so derive one the same way the page's
+    # own JS does: the admin_key query parameter, or the admin_key cookie that JS
+    # writes once the parameter has been seen.
+    _is_admin = ('JK8h5Pq2L9aZ7rT3mN6bX' in
+                 (query_params.get('admin_key'), _get_cookie(event, 'admin_key')))
+    portfolio_btn = _portfolio_button_html(event, _is_admin)
 
     html_content = f"""
     <!DOCTYPE html>
