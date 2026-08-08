@@ -119,16 +119,16 @@ def _portfolio_button_html(event, is_admin=False):
     if not email:
         if not is_admin:
             return ""
-        href = PORTFOLIO_URL + "/"
+        href = PORTFOLIO_URL + "/?view=admin"
         return (
             f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
-            'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);margin-left:auto;">Your Watchlist</a>'
+            'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);margin-left:auto;">Admin Portal</a>'
         )
     token = _make_handoff_token(email)
     href = f"{PORTFOLIO_URL}/?sso={urllib.parse.quote(token, safe='')}"
     return (
         f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
-        'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);margin-left:auto;">Your Watchlist</a>'
+        'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);margin-left:auto;">My Account</a>'
     )
 
 
