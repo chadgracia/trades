@@ -66,7 +66,7 @@ def _exchange_code_for_email(code):
 def _make_identity_cookie(email):
     sig = hmac.new(IDENTITY_SECRET.encode(), email.encode(), hashlib.sha256).hexdigest()
     val = base64.urlsafe_b64encode(f"{email}|{sig}".encode()).decode().rstrip("=")
-    return f"gg_id={val}; Max-Age=2592000; Path=/; Secure; SameSite=Lax"
+    return f"gg_id={val}; Max-Age=31536000; Path=/; Secure; SameSite=Lax"
 
 
 def _get_cookie(event, name):
@@ -773,7 +773,7 @@ def lambda_handler(event, context):
             or '/'
         )
         logger.info("Cognito auth code received; redirecting to clean URL %s", clean_path)
-        cookies = ['CognitoIdentityServiceProvider=1; Max-Age=2592000; Path=/; Secure; SameSite=Lax']
+        cookies = ['CognitoIdentityServiceProvider=1; Max-Age=31536000; Path=/; Secure; SameSite=Lax']
         try:
             email = _exchange_code_for_email(query_params.get('code'))
             if email and IDENTITY_SECRET:
