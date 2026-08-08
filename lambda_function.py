@@ -112,18 +112,21 @@ def _make_handoff_token(email):
 
 
 def _portfolio_button_html(event, is_admin=False):
-    """The 'Your Watchlist' button HTML. Clients need a valid gg_id so we can mint
-    an SSO handoff; admins already hold a portfolio session on that domain, so a
-    plain link works and the button never disappears on them."""
-    email = _read_identity_email(event)
-    if not email:
-        if not is_admin:
-            return ""
+    """The portfolio button HTML: 'Admin Portal' for admins, 'My Account' for a
+    signed-in client, '' for anyone else. Admin identity wins outright and is
+    checked first — an admin already holds a year-long portfolio session on that
+    domain, so a plain link works, and the button must not flip to My Account just
+    because signing into trades also minted a gg_id. Clients still need a valid
+    gg_id, since that is what an SSO handoff token is minted from."""
+    if is_admin:
         href = PORTFOLIO_URL + "/?view=admin"
         return (
             f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
             'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);margin-left:auto;">Admin Portal</a>'
         )
+    email = _read_identity_email(event)
+    if not email:
+        return ""
     token = _make_handoff_token(email)
     href = f"{PORTFOLIO_URL}/?sso={urllib.parse.quote(token, safe='')}"
     return (
