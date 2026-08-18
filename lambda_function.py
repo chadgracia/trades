@@ -792,9 +792,13 @@ def lambda_handler(event, context):
                 logger.info("Identity captured for Cognito login")
         except Exception as e:
             logger.warning(f"Identity capture failed (non-fatal): {e}")
+        # A 302 can't run JS, so carry an auth marker through the redirect. The
+        # rendered dashboard fires the GA4 event when it sees ?auth=1, then strips
+        # the marker client-side so a refresh can't re-fire it.
+        auth_sep = '&' if '?' in clean_path else '?'
         return {
             'statusCode': 302,
-            'headers': {'Location': clean_path},
+            'headers': {'Location': f'{clean_path}{auth_sep}auth=1'},
             'cookies': cookies,
             'body': '',
         }
@@ -921,10 +925,40 @@ def lambda_handler(event, context):
                  (query_params.get('admin_key'), _get_cookie(event, 'admin_key')))
     portfolio_btn = _portfolio_button_html(event, _is_admin)
 
+    # GA4 auth event. The Cognito return leg redirects to ?auth=1 (see above), so this
+    # renders only on the pageview immediately following authentication, never on an
+    # ordinary dashboard load. Two scripts, both required:
+    #   1. Runs BEFORE the gtag config below, so the auto page_view reports the clean
+    #      URL rather than one carrying ?auth=1. It deletes only the auth parameter,
+    #      leaving ?company=/?side=/?admin_key= intact for the client JS that reads
+    #      them from location.search later in the page.
+    #   2. Fires the event itself, after gtag() is defined.
+    # The event is 'login' for everyone: this Lambda has no user store (it only reads
+    # deal data from S3) and the Cognito id_token carries no first-login claim, so a
+    # new registration is indistinguishable from a returning sign-in here.
+    if query_params.get('auth') == '1':
+        ga_auth_strip_js = """<script>
+          (function () {
+            try {
+              var u = new URL(window.location.href);
+              if (!u.searchParams.has('auth')) return;
+              u.searchParams.delete('auth');
+              history.replaceState(null, '', u.pathname + u.search + u.hash);
+            } catch (e) {}
+          })();
+        </script>"""
+        ga_auth_event_js = """<script>
+          gtag('event', 'login', { method: 'Cognito' });
+        </script>"""
+    else:
+        ga_auth_strip_js = ''
+        ga_auth_event_js = ''
+
     html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
+        {ga_auth_strip_js}
         <!-- Google tag (gtag.js) -->
         <script async src="https://www.googletagmanager.com/gtag/js?id=G-L9JN3TRR2S"></script>
         <script>
@@ -933,6 +967,7 @@ def lambda_handler(event, context):
           gtag('js', new Date());
           gtag('config', 'G-L9JN3TRR2S');
         </script>
+        {ga_auth_event_js}
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Indications for Accredited Investors</title>
