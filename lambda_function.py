@@ -971,6 +971,8 @@ def lambda_handler(event, context):
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Indications for Accredited Investors</title>
+        <link rel="icon" type="image/png" href="https://pre-ipo.graciagroup.com/favicon.png">
+        <link rel="apple-touch-icon" href="https://pre-ipo.graciagroup.com/favicon.png">
         <link rel="stylesheet" href="https://s3.us-east-1.amazonaws.com/main.css/master.css">
         <style>
             body {{
