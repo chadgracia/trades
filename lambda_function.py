@@ -1078,31 +1078,14 @@ def lambda_handler(event, context):
             }}
             table {{
                 border-collapse: collapse;
-                table-layout: fixed;
                 width: 100%;
                 margin-bottom: 20px;
             }}
 
-            /* Fixed column widths: table always equals page width; long values wrap inside their column */
-            #dealsTable th:nth-child(1) {{ width: 7.5%; }}   /* Deal ID */
-            #dealsTable th:nth-child(2) {{ width: 5%; }}     /* Type */
-            #dealsTable th:nth-child(3) {{ width: 11%; }}    /* Company */
-            #dealsTable th:nth-child(4) {{ width: 9%; }}     /* Structure */
-            #dealsTable th:nth-child(5) {{ width: 7%; }}     /* Net */
-            #dealsTable th:nth-child(6) {{ width: 7%; }}     /* Gross */
-            #dealsTable th:nth-child(7) {{ width: 8.5%; }}   /* Min Size */
-            #dealsTable th:nth-child(8) {{ width: 9.5%; }}   /* Max Size */
-            #dealsTable th:nth-child(9) {{ width: 7%; }}     /* LR PPS */
-            #dealsTable th:nth-child(10) {{ width: 6.5%; }}  /* LR Val */
-            #dealsTable th:nth-child(11) {{ width: 4.75%; }} /* Man. Fee */
-            #dealsTable th:nth-child(12) {{ width: 4.75%; }} /* Carry */
-            #dealsTable th:nth-child(13) {{ width: 12.5%; }} /* Updated */
-
             th, td {{
                 border: 1px solid #ddd;
-                padding: 12px 8px;
+                padding: 12px 6px;
                 text-align: left;
-                overflow-wrap: break-word;
             }}
 
             tr:nth-child(even) {{
