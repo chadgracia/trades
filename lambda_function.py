@@ -26,6 +26,7 @@ NUDGE_KEY = os.environ.get("NUDGE_KEY", "")
 LOI_PAGE_KEY = os.environ.get("LOI_PAGE_KEY", "")
 LOI_SEND_URL = "https://aep54fnrcp4bxiowlw3fvt26x40qhgpn.lambda-url.us-east-1.on.aws/"
 PORTFOLIO_URL = "https://jtm2stbnfelfoabi3yvyvyqovu0wxahu.lambda-url.us-east-1.on.aws"
+SYNDASH_URL = "https://ws4stw4iul75a7yx5dra2wmnq40kipav.lambda-url.us-east-1.on.aws"
 
 
 def _exchange_code_for_email(code):
@@ -132,6 +133,82 @@ def _portfolio_button_html(event, is_admin=False):
     return (
         f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
         'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);margin-left:auto;">My Account</a>'
+    )
+
+
+# --- Additive "My Dashboard" nav button (syndicate dashboard SSO handoff) ---
+_SYNDASH_BUCKET = "full-pipeline-cache"
+_SYNDASH_PEOPLE_INDEX_KEY = "people_index.json"
+_SYNDASH_DEALS_KEY = "deals.json"
+_SYNDASH_SELL_ORDER_ID = 5011675  # custom_label_1958 option id (see pipeline-agent's DEAL_TYPE_MAP)
+
+_syndash_cache = {"stamp": None, "eligible_emails": None}
+
+
+def _syndash_eligible_emails():
+    """Lowercased emails with >=1 deal tagged Sell Order (custom_field
+    custom_label_1958 contains 5011675) in any stage, resolved from
+    full-pipeline-cache's small people_index.json (built by portfolio-deploy's
+    build_people_index.py) + deals.json (built by pipeline-agent).
+
+    Cached on the warm Lambda container, keyed on both objects' S3
+    LastModified, so a warm invoke only re-fetches the bodies when either
+    source actually changed. Returns None on ANY failure (permissions,
+    missing file, timeout, unexpected shape) — never raises."""
+    global _syndash_cache
+    try:
+        s3 = boto3.client('s3')
+        people_lm = s3.head_object(Bucket=_SYNDASH_BUCKET, Key=_SYNDASH_PEOPLE_INDEX_KEY)['LastModified']
+        deals_lm = s3.head_object(Bucket=_SYNDASH_BUCKET, Key=_SYNDASH_DEALS_KEY)['LastModified']
+        stamp = (people_lm, deals_lm)
+        if stamp == _syndash_cache["stamp"]:
+            return _syndash_cache["eligible_emails"]
+
+        by_id = json.loads(
+            s3.get_object(Bucket=_SYNDASH_BUCKET, Key=_SYNDASH_PEOPLE_INDEX_KEY)['Body'].read()
+        ).get("by_id", {})
+        deals = json.loads(
+            s3.get_object(Bucket=_SYNDASH_BUCKET, Key=_SYNDASH_DEALS_KEY)['Body'].read()
+        ).get("deals", [])
+
+        eligible_pids = set()
+        for d in deals:
+            raw = (d.get("custom_fields") or {}).get("custom_label_1958")
+            vals = raw if isinstance(raw, list) else [raw]
+            if _SYNDASH_SELL_ORDER_ID in vals:
+                pid = d.get("primary_contact_id")
+                if pid is not None:
+                    eligible_pids.add(str(pid))
+
+        eligible_emails = set()
+        for pid in eligible_pids:
+            email = (by_id.get(pid) or {}).get("email")
+            if email:
+                eligible_emails.add(email.strip().lower())
+
+        _syndash_cache = {"stamp": stamp, "eligible_emails": eligible_emails}
+        return eligible_emails
+    except Exception as e:
+        logger.warning(f"My Dashboard eligibility lookup failed (non-fatal): {e}")
+        return None
+
+
+def _syndash_button_html(event):
+    """'My Dashboard' nav button, styled like My Account, for a signed-in client
+    with >=1 Sell Order deal — same session read as _portfolio_button_html,
+    same token minting, same quoting. '' when logged out, ineligible, or on
+    any lookup failure — the page renders exactly as today in that case."""
+    email = _read_identity_email(event)
+    if not email:
+        return ""
+    eligible_emails = _syndash_eligible_emails()
+    if eligible_emails is None or email.strip().lower() not in eligible_emails:
+        return ""
+    token = _make_handoff_token(email)
+    href = f"{SYNDASH_URL}/?sso={urllib.parse.quote(token, safe='')}"
+    return (
+        f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
+        'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);">My Dashboard</a>'
     )
 
 
@@ -924,6 +1001,7 @@ def lambda_handler(event, context):
     _is_admin = ('JK8h5Pq2L9aZ7rT3mN6bX' in
                  (query_params.get('admin_key'), _get_cookie(event, 'admin_key')))
     portfolio_btn = _portfolio_button_html(event, _is_admin)
+    my_dashboard_btn = _syndash_button_html(event)
 
     # GA4 auth event. The Cognito return leg redirects to ?auth=1 (see above), so this
     # renders only on the pageview immediately following authentication, never on an
@@ -1999,6 +2077,7 @@ def lambda_handler(event, context):
         <div class="topbar">
             <button class="btn" onclick="window.location.href='https://www.graciagroup.com/'">Gracia Group Home</button>
             {portfolio_btn}
+            {my_dashboard_btn}
         </div>
 
         <div class="header">
