@@ -26,6 +26,9 @@ NUDGE_KEY = os.environ.get("NUDGE_KEY", "")
 LOI_PAGE_KEY = os.environ.get("LOI_PAGE_KEY", "")
 LOI_SEND_URL = "https://aep54fnrcp4bxiowlw3fvt26x40qhgpn.lambda-url.us-east-1.on.aws/"
 PORTFOLIO_URL = "https://jtm2stbnfelfoabi3yvyvyqovu0wxahu.lambda-url.us-east-1.on.aws"
+SYNDICATE_DASH_URL = "https://ws4stw4iul75a7yx5dra2wmnq40kipav.lambda-url.us-east-1.on.aws"
+SYNDICATE_TENANTS_URL = f"{SYNDICATE_DASH_URL}/?key=JK8h5Pq2L9aZ7rT3mN6bX&tenants=list"
+_syndicate_tenant_cache = {"emails": None}
 
 
 def _exchange_code_for_email(code):
@@ -133,6 +136,48 @@ def _portfolio_button_html(event, is_admin=False):
         f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
         'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);margin-left:auto;">My Account</a>'
     )
+
+
+def _syndicate_eligible_emails():
+    """Lowercased emails eligible for the Syndicate Dashboard (>=1 deal
+    tagged Sell Order, any stage), fetched once per warm container from
+    syndicate-dash's admin-gated ?tenants=list route. Short timeout,
+    fail-soft: any error caches an empty set so the button just renders
+    nothing rather than erroring or retrying every request."""
+    if _syndicate_tenant_cache["emails"] is not None:
+        return _syndicate_tenant_cache["emails"]
+    emails = set()
+    try:
+        req = urllib.request.Request(SYNDICATE_TENANTS_URL)
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+        emails = {(t.get("email") or "").strip().lower()
+                  for t in (data.get("tenants") or []) if t.get("email")}
+    except Exception as e:
+        logger.warning(f"Syndicate tenants fetch failed (non-fatal): {e}")
+    _syndicate_tenant_cache["emails"] = emails
+    return emails
+
+
+def _my_dashboard_button_html(event):
+    """'My Dashboard' link, additive: '' unless the signed-in user's gg_id
+    email is on the Syndicate Dashboard's eligible-tenant list, in which
+    case it's the same signed handoff-token SSO the portfolio button
+    already mints. Any failure (identity, fetch, or token) renders ''
+    and leaves the page exactly as today."""
+    try:
+        email = _read_identity_email(event)
+        if not email or email.strip().lower() not in _syndicate_eligible_emails():
+            return ""
+        token = _make_handoff_token(email)
+        href = f"{SYNDICATE_DASH_URL}/?sso={urllib.parse.quote(token, safe='')}"
+        return (
+            f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
+            'style="background:var(--accent,#3d5a73);border-color:var(--accent,#3d5a73);">My Dashboard</a>'
+        )
+    except Exception as e:
+        logger.warning(f"My Dashboard button failed (non-fatal): {e}")
+        return ""
 
 
 def _get_http_method(event):
@@ -924,6 +969,7 @@ def lambda_handler(event, context):
     _is_admin = ('JK8h5Pq2L9aZ7rT3mN6bX' in
                  (query_params.get('admin_key'), _get_cookie(event, 'admin_key')))
     portfolio_btn = _portfolio_button_html(event, _is_admin)
+    my_dashboard_btn = _my_dashboard_button_html(event)
 
     # GA4 auth event. The Cognito return leg redirects to ?auth=1 (see above), so this
     # renders only on the pageview immediately following authentication, never on an
@@ -1998,7 +2044,7 @@ def lambda_handler(event, context):
     <body>
         <div class="topbar">
             <button class="btn" onclick="window.location.href='https://www.graciagroup.com/'">Gracia Group Home</button>
-            {portfolio_btn}
+            {portfolio_btn}{my_dashboard_btn}
         </div>
 
         <div class="header">
