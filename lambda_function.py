@@ -245,7 +245,7 @@ def _render_top_nav(event, is_admin=False):
 
     return (
         '<nav class="topnav">'
-        '<a href="https://trades.graciagroup.com/" class="nav-brand">Gracia Group</a>'
+        '<a href="https://www.graciagroup.com" class="nav-brand">Gracia Group</a>'
         '<div class="nav-tabs">'
         '<a href="https://trades.graciagroup.com/" class="nav-tab">Indications</a>'
         f'<a href="{portfolio_href}" target="_blank" rel="noopener" class="nav-tab">Portfolio &amp; Watchlist</a>'
