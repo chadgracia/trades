@@ -4,6 +4,7 @@ import time
 import base64
 import hmac
 import hashlib
+import html as html_mod
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -25,7 +26,6 @@ IDENTITY_SECRET = os.environ.get("IDENTITY_SECRET", "")
 NUDGE_KEY = os.environ.get("NUDGE_KEY", "")
 LOI_PAGE_KEY = os.environ.get("LOI_PAGE_KEY", "")
 LOI_SEND_URL = "https://aep54fnrcp4bxiowlw3fvt26x40qhgpn.lambda-url.us-east-1.on.aws/"
-PORTFOLIO_URL = "https://jtm2stbnfelfoabi3yvyvyqovu0wxahu.lambda-url.us-east-1.on.aws"
 SYNDICATE_DASH_URL = "https://ws4stw4iul75a7yx5dra2wmnq40kipav.lambda-url.us-east-1.on.aws"
 SYNDICATE_TENANTS_URL = f"{SYNDICATE_DASH_URL}/?key=JK8h5Pq2L9aZ7rT3mN6bX&tenants=list"
 _syndicate_tenant_cache = {"emails": None}
@@ -114,30 +114,6 @@ def _make_handoff_token(email):
     return base64.urlsafe_b64encode(f"{email}|{exp}|{sig}".encode()).decode().rstrip("=")
 
 
-def _portfolio_button_html(event, is_admin=False):
-    """The portfolio button HTML: 'Admin Portal' for admins, 'My Account' for a
-    signed-in client, '' for anyone else. Admin identity wins outright and is
-    checked first — an admin already holds a year-long portfolio session on that
-    domain, so a plain link works, and the button must not flip to My Account just
-    because signing into trades also minted a gg_id. Clients still need a valid
-    gg_id, since that is what an SSO handoff token is minted from."""
-    if is_admin:
-        href = PORTFOLIO_URL + "/?view=admin"
-        return (
-            f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
-            'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);margin-left:auto;">Admin Portal</a>'
-        )
-    email = _read_identity_email(event)
-    if not email:
-        return ""
-    token = _make_handoff_token(email)
-    href = f"{PORTFOLIO_URL}/?sso={urllib.parse.quote(token, safe='')}"
-    return (
-        f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
-        'style="background:var(--pos,#1f7a4d);border-color:var(--pos,#1f7a4d);margin-left:auto;">My Account</a>'
-    )
-
-
 def _syndicate_eligible_emails():
     """Lowercased emails eligible for the Syndicate Dashboard (>=1 deal
     tagged Sell Order, any stage), fetched once per warm container from
@@ -159,25 +135,128 @@ def _syndicate_eligible_emails():
     return emails
 
 
-def _my_dashboard_button_html(event):
-    """'My Dashboard' link, additive: '' unless the signed-in user's gg_id
-    email is on the Syndicate Dashboard's eligible-tenant list, in which
-    case it's the same signed handoff-token SSO the portfolio button
-    already mints. Any failure (identity, fetch, or token) renders ''
-    and leaves the page exactly as today."""
+AUCTIONS_BUCKET = "full-pipeline-cache"
+AUCTIONS_KEY = "auctions.json"
+DESK_URL = "https://desk.graciagroup.com"
+
+
+def _live_auctions_for_nav():
+    """[(auction_id, auction_dict), ...] for every open auction, read fresh
+    from S3 each request. Open means no close_date, or a close_date of
+    today or later (same rule as CRMDealDetails.live_auction_for_deal).
+    Any read/parse failure returns [] so the nav's Auctions tab just
+    doesn't render rather than breaking the page."""
     try:
-        email = _read_identity_email(event)
-        if not email or email.strip().lower() not in _syndicate_eligible_emails():
-            return ""
-        token = _make_handoff_token(email)
-        href = f"{SYNDICATE_DASH_URL}/?sso={urllib.parse.quote(token, safe='')}"
-        return (
-            f'<a href="{href}" target="_blank" rel="noopener" class="btn" '
-            'style="background:var(--accent,#3d5a73);border-color:var(--accent,#3d5a73);">My Dashboard</a>'
-        )
+        s3 = boto3.client('s3')
+        obj = s3.get_object(Bucket=AUCTIONS_BUCKET, Key=AUCTIONS_KEY)
+        data = json.loads(obj['Body'].read())
+        auctions = data.get('auctions') or {}
+        today = datetime.now().strftime('%Y-%m-%d')
+        live = []
+        for aid, auc in auctions.items():
+            close_date = (auc.get('close_date') or '').strip()
+            if not close_date or close_date >= today:
+                live.append((aid, auc))
+        return live
     except Exception as e:
-        logger.warning(f"My Dashboard button failed (non-fatal): {e}")
-        return ""
+        logger.warning(f"Auctions nav tab: auctions.json load failed (non-fatal): {e}")
+        return []
+
+
+def _nav_login_url(dest):
+    """Cognito hosted-UI login URL carrying `dest` (bare, no token) as
+    base64url state, so the code-exchange leg lands there with a fresh sso
+    token appended once the visitor signs in."""
+    state = base64.urlsafe_b64encode(dest.encode()).decode().rstrip('=')
+    return (
+        "https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login"
+        f"?client_id={COGNITO_CLIENT_ID}&response_type=code&scope=openid+email"
+        f"&redirect_uri={COGNITO_REDIRECT_URI}"
+        f"&state={urllib.parse.quote(state, safe='')}"
+    )
+
+
+def _render_top_nav(event, is_admin=False):
+    """The shared client-facing top nav: brand, tabs (Indications, Portfolio
+    & Watchlist, two placeholder tabs, Auctions when at least one is live,
+    My Dashboard for eligible tenants), and the account control on the
+    right. Any failure building an optional tab must not break the rest
+    of the nav or the page."""
+    email = _read_identity_email(event)
+
+    # Portfolio & Watchlist: admin identity wins outright, same rule the old
+    # standalone button used — an admin already holds a year-long session on
+    # the desk domain, so a plain link works regardless of gg_id.
+    if is_admin:
+        portfolio_href = DESK_URL + "/?view=admin"
+    elif email:
+        pw_token = _make_handoff_token(email)
+        portfolio_href = f"{DESK_URL}/?sso={urllib.parse.quote(pw_token, safe='')}"
+    else:
+        portfolio_href = _nav_login_url(DESK_URL + "/")
+
+    auctions_tab = ""
+    try:
+        live = _live_auctions_for_nav()
+        if live:
+            first_aid = live[0][0]
+            auc_dest = f"{DESK_URL}/?view=auction&id={urllib.parse.quote(str(first_aid))}"
+            if email:
+                auc_token = _make_handoff_token(email)
+                auc_sep = '&' if '?' in auc_dest else '?'
+                auc_href = f"{auc_dest}{auc_sep}sso={urllib.parse.quote(auc_token, safe='')}"
+            else:
+                auc_href = _nav_login_url(auc_dest)
+            auctions_tab = (
+                f'<a href="{auc_href}" target="_blank" rel="noopener" class="nav-tab">'
+                f'Auctions ({len(live)})</a>'
+            )
+    except Exception as e:
+        logger.warning(f"Auctions nav tab failed (non-fatal): {e}")
+        auctions_tab = ""
+
+    dashboard_tab = ""
+    try:
+        if email and email.strip().lower() in _syndicate_eligible_emails():
+            dash_token = _make_handoff_token(email)
+            dash_href = f"{SYNDICATE_DASH_URL}/?sso={urllib.parse.quote(dash_token, safe='')}"
+            dashboard_tab = f'<a href="{dash_href}" target="_blank" rel="noopener" class="nav-tab">My Dashboard</a>'
+    except Exception as e:
+        logger.warning(f"My Dashboard nav tab failed (non-fatal): {e}")
+        dashboard_tab = ""
+
+    if email:
+        safe_email = html_mod.escape(email, quote=True)
+        account_html = (
+            '<div class="navacct" tabindex="0">'
+            '<span class="navacct-trigger">My Account &#9662;</span>'
+            '<div class="navacct-menu">'
+            f'<div class="navacct-item navacct-static">Signed in as {safe_email}</div>'
+            '<div class="navacct-item navacct-disabled" title="Coming soon">Profile &mdash; coming soon</div>'
+            '<a class="navacct-item" href="https://trades.graciagroup.com/?signout=1">Sign out</a>'
+            '</div></div>'
+        )
+    else:
+        cur_path = (event.get('rawPath')
+                    or (event.get('requestContext') or {}).get('http', {}).get('path') or '/')
+        cur_qs = event.get('rawQueryString') or ''
+        cur_url = COGNITO_REDIRECT_URI + cur_path + (('?' + cur_qs) if cur_qs else '')
+        account_html = f'<a href="{_nav_login_url(cur_url)}" class="btn nav-signin">Sign In</a>'
+
+    return (
+        '<nav class="topnav">'
+        '<a href="https://trades.graciagroup.com/" class="nav-brand">Gracia Group</a>'
+        '<div class="nav-tabs">'
+        '<a href="https://trades.graciagroup.com/" class="nav-tab">Indications</a>'
+        f'<a href="{portfolio_href}" target="_blank" rel="noopener" class="nav-tab">Portfolio &amp; Watchlist</a>'
+        '<span class="nav-tab nav-tab-disabled" title="Coming soon">Introductions</span>'
+        '<span class="nav-tab nav-tab-disabled" title="Coming soon">Demand Board</span>'
+        + auctions_tab
+        + dashboard_tab
+        + '</div>'
+        + account_html
+        + '</nav>'
+    )
 
 
 def _get_http_method(event):
@@ -822,6 +901,17 @@ def lambda_handler(event, context):
         return {'statusCode': 200, 'headers': {'Content-Type': 'text/html'},
                 'body': f'<p style="font-family:sans-serif;padding:40px">Logged in as {_mint_email}.<br><br><a href="{_mint_link}">Open web-bid test link (Positron)</a></p>'}
 
+    if query_params.get('signout') == '1':
+        return {
+            'statusCode': 303,
+            'headers': {'Location': '/'},
+            'cookies': [
+                'gg_id=; Max-Age=0; Path=/; Secure; SameSite=Lax',
+                'CognitoIdentityServiceProvider=; Max-Age=0; Path=/; Secure; SameSite=Lax',
+            ],
+            'body': '',
+        }
+
     if query_params.get('code'):
         clean_path = (
             event.get('rawPath')
@@ -997,8 +1087,7 @@ def lambda_handler(event, context):
     # writes once the parameter has been seen.
     _is_admin = ('JK8h5Pq2L9aZ7rT3mN6bX' in
                  (query_params.get('admin_key'), _get_cookie(event, 'admin_key')))
-    portfolio_btn = _portfolio_button_html(event, _is_admin)
-    my_dashboard_btn = _my_dashboard_button_html(event)
+    top_nav_html = _render_top_nav(event, _is_admin)
 
     # GA4 auth event. The Cognito return leg redirects to ?auth=1 (see above), so this
     # renders only on the pageview immediately following authentication, never on an
@@ -1252,6 +1341,107 @@ def lambda_handler(event, context):
                 align-items: center;
                 gap: 10px;
                 margin-bottom: 10px;
+            }}
+            .topnav {{
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 16px;
+                padding: 10px 0;
+                margin-bottom: 10px;
+                border-bottom: 1px solid #ddd;
+            }}
+            .nav-brand {{
+                font-weight: 700;
+                font-size: 17px;
+                color: var(--ink);
+                text-decoration: none;
+                white-space: nowrap;
+            }}
+            .nav-tabs {{
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 18px;
+                flex: 1;
+            }}
+            .nav-tab {{
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--ink);
+                text-decoration: none;
+                white-space: nowrap;
+            }}
+            .nav-tab:hover {{
+                color: var(--accent, #3d5a73);
+            }}
+            .nav-tab-disabled {{
+                color: #999;
+                cursor: default;
+            }}
+            .nav-tab-disabled:hover {{
+                color: #999;
+            }}
+            .nav-signin {{
+                background-color: var(--accent, #3d5a73);
+                color: #fff;
+                padding: 8px 18px;
+                font-size: 14px;
+                margin-bottom: 0;
+                margin-left: auto;
+            }}
+            .navacct {{
+                position: relative;
+                margin-left: auto;
+            }}
+            .navacct-trigger {{
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--ink);
+                cursor: pointer;
+                white-space: nowrap;
+            }}
+            .navacct-menu {{
+                display: none;
+                position: absolute;
+                right: 0;
+                top: 100%;
+                margin-top: 6px;
+                background: #fff;
+                border-radius: 6px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                min-width: 220px;
+                padding: 6px 0;
+                z-index: 50;
+            }}
+            .navacct:hover .navacct-menu, .navacct:focus-within .navacct-menu {{
+                display: block;
+            }}
+            .navacct-item {{
+                display: block;
+                padding: 9px 16px;
+                font-size: 13px;
+                color: var(--ink);
+                text-decoration: none;
+                white-space: nowrap;
+            }}
+            .navacct-item:hover {{
+                background: #f4f4f4;
+            }}
+            .navacct-static {{
+                color: var(--text-secondary, #666);
+                font-weight: 600;
+                cursor: default;
+            }}
+            .navacct-static:hover {{
+                background: none;
+            }}
+            .navacct-disabled {{
+                color: #999;
+                cursor: default;
+            }}
+            .navacct-disabled:hover {{
+                background: none;
             }}
             .btn {{
                 display: inline-block;
@@ -2071,10 +2261,7 @@ def lambda_handler(event, context):
         </script>
     </head>
     <body>
-        <div class="topbar">
-            <button class="btn" onclick="window.location.href='https://www.graciagroup.com/'">Gracia Group Home</button>
-            {portfolio_btn}{my_dashboard_btn}
-        </div>
+        {top_nav_html}
 
         <div class="header">
             <div class="title-row">
