@@ -830,6 +830,7 @@ def lambda_handler(event, context):
         )
         logger.info("Cognito auth code received; redirecting to clean URL %s", clean_path)
         cookies = ['CognitoIdentityServiceProvider=1; Max-Age=31536000; Path=/; Secure; SameSite=Lax']
+        email = None
         try:
             email = _exchange_code_for_email(query_params.get('code'))
             if email and IDENTITY_SECRET:
@@ -837,6 +838,34 @@ def lambda_handler(event, context):
                 logger.info("Identity captured for Cognito login")
         except Exception as e:
             logger.warning(f"Identity capture failed (non-fatal): {e}")
+
+        # Optional post-login bounce: `state` carries a base64url-encoded destination
+        # URL (minted by a caller like CRMDealDetails) that wants the viewer sent
+        # back there, with a fresh SSO handoff token, instead of the dashboard here.
+        if query_params.get('state') and email:
+            try:
+                _raw_state = query_params['state']
+                _dest = base64.urlsafe_b64decode(
+                    _raw_state + '=' * (-len(_raw_state) % 4)
+                ).decode()
+                _allowed_prefixes = (
+                    'https://trades.graciagroup.com/',
+                    'https://desk.graciagroup.com/',
+                    'https://7u6sphgup5gjuywcvpuwzhruiq0asgdz.lambda-url.us-east-1.on.aws/',
+                )
+                if _dest.startswith(_allowed_prefixes):
+                    _state_tok = _make_handoff_token(email)
+                    _state_sep = '&' if '?' in _dest else '?'
+                    _state_redirect = f"{_dest}{_state_sep}sso={urllib.parse.quote(_state_tok, safe='')}"
+                    return {
+                        'statusCode': 302,
+                        'headers': {'Location': _state_redirect},
+                        'cookies': cookies,
+                        'body': '',
+                    }
+            except Exception as e:
+                logger.warning(f"State redirect failed (non-fatal): {e}")
+
         # A 302 can't run JS, so carry an auth marker through the redirect. The
         # rendered dashboard fires the GA4 event when it sees ?auth=1, then strips
         # the marker client-side so a refresh can't re-fire it.
