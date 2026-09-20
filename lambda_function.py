@@ -195,6 +195,16 @@ def _render_top_nav(event, is_admin=False):
     else:
         portfolio_href = _nav_login_url(DESK_URL + "/")
 
+    # Demand Board: same auth-aware link pattern as Portfolio & Watchlist above,
+    # just a different destination.
+    if is_admin:
+        demand_href = DESK_URL + "/?view=demand"
+    elif email:
+        demand_token = _make_handoff_token(email)
+        demand_href = f"{DESK_URL}/?view=demand&sso={urllib.parse.quote(demand_token, safe='')}"
+    else:
+        demand_href = _nav_login_url(DESK_URL + "/?view=demand")
+
     auctions_tab = ""
     try:
         live = _live_auctions_for_nav()
@@ -252,7 +262,7 @@ def _render_top_nav(event, is_admin=False):
         '<a href="https://trades.graciagroup.com/" class="nav-tab">Indications</a>'
         f'<a href="{portfolio_href}" target="_blank" rel="noopener" class="nav-tab">Portfolio &amp; Watchlist</a>'
         '<span class="nav-tab nav-tab-disabled" title="Coming soon">Introductions</span>'
-        '<span class="nav-tab nav-tab-disabled" title="Coming soon">Demand Board</span>'
+        f'<a href="{demand_href}" target="_blank" rel="noopener" class="nav-tab">Demand Board</a>'
         + auctions_tab
         + dashboard_tab
         + '</div>'
