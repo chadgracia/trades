@@ -209,10 +209,7 @@ def _render_top_nav(event, is_admin=False):
     try:
         live = _live_auctions_for_nav()
         if live:
-            if len(live) == 1:
-                auc_dest = f"{DESK_URL}/?view=auction&id={urllib.parse.quote(str(live[0][0]))}"
-            else:
-                auc_dest = f"{DESK_URL}/?view=auction_list"
+            auc_dest = f"{DESK_URL}/?view=auctions"
             if email:
                 auc_token = _make_handoff_token(email)
                 auc_sep = '&' if '?' in auc_dest else '?'
