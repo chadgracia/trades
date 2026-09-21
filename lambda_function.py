@@ -139,10 +139,10 @@ AUCTIONS_BUCKET = "full-pipeline-cache"
 AUCTIONS_KEY = "auctions.json"
 DESK_URL = "https://desk.graciagroup.com"
 
-_PD_HASH_CACHE = {'ts': 0.0, 'js': '[]'}
+_PD_HASH_CACHE = {'ts': 0.0, 'emails': '[]', 'domains': '[]'}
 
 
-PD_SEARCH_ID = 19530439  # "S: Weekly Mailer Leads" focused list
+PD_SEARCH_ID = 20538950  # "S: Partner Desk Check" — Whitelist-tagged clients
 
 
 def _pd_fetch_search_page(page):
@@ -158,32 +158,62 @@ def _pd_fetch_search_page(page):
         return json.loads(resp.read().decode())
 
 
-def _partner_desk_hashes_js():
-    """Build the JS array of truncated salted email hashes for the
-    partner-desk name check, from the 'S: Weekly Mailer Leads' focused
-    list (Pipeline saved search 19530439) — skinny (name, email) rows,
-    not people.json. Cached in-module for 15 minutes. Any failure
-    returns the last good value (or '[]') so the page still renders
-    with the checker in its offline state."""
+PD_FREEMAIL = {
+    "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com", "icloud.com",
+    "me.com", "mac.com", "msn.com", "live.com", "comcast.net", "protonmail.com",
+    "proton.me", "yandex.ru", "yandex.com", "mail.ru", "gmx.com", "gmx.de", "web.de",
+    "ymail.com", "googlemail.com", "att.net", "verizon.net", "sbcglobal.net", "pm.me",
+    "hey.com", "fastmail.com", "qq.com", "163.com", "126.com", "hotmail.co.uk",
+    "yahoo.co.uk", "btinternet.com", "rogers.com", "shaw.ca", "bell.net", "ukr.net", "i.ua",
+}
+
+PD_FIRM_TYPES = {
+    "vc or pe fund", "family office", "institution", "hedge fund",
+    "syndicator", "wealth advisor", "corporation",
+}
+
+
+def _partner_desk_hash_sets():
+    """Build both hash sets for the partner-desk name check from the
+    'S: Partner Desk Check' focused list (Whitelist-tagged clients).
+    'emails' = every address found in ANY column whose id contains
+    'email' (work/home/other); 'domains' = corporate domains of rows
+    whose Transactor Type (custom_label_3759163) is an investor
+    organization (PD_FIRM_TYPES) — employee holders, natural persons,
+    and intermediaries do NOT contribute their domains, and freemail
+    domains are always excluded. Cached in-module for 15 minutes; any
+    failure returns the last good value so the page renders with the
+    checker in its offline state."""
     import time
     import hashlib
     import concurrent.futures
     now = time.time()
-    if _PD_HASH_CACHE['js'] != '[]' and now - _PD_HASH_CACHE['ts'] < 900:
-        return _PD_HASH_CACHE['js']
+    if _PD_HASH_CACHE['emails'] != '[]' and now - _PD_HASH_CACHE['ts'] < 900:
+        return _PD_HASH_CACHE
     try:
-        emails = set()
+        rows = []
 
         def _collect(data):
             cols = [c.get("id") for c in (data.get("columns") or [])]
-            if "person_email" not in cols:
-                raise RuntimeError("focused list has no person_email column")
-            i_email = cols.index("person_email")
+            email_idx = [i for i, cid in enumerate(cols)
+                         if cid and "email" in str(cid).lower()]
+            if not email_idx:
+                raise RuntimeError("focused list has no email columns")
+            i_type = cols.index("custom_label_3759163") if "custom_label_3759163" in cols else None
             for entry in (data.get("entries") or []):
-                if isinstance(entry, list) and len(entry) > i_email:
-                    e = (entry[i_email] or "").strip().lower()
-                    if e and "@" in e:
-                        emails.add(e)
+                if not isinstance(entry, list):
+                    continue
+                t = ""
+                if i_type is not None and len(entry) > i_type and entry[i_type]:
+                    t = str(entry[i_type]).strip().lower()
+                found = []
+                for i in email_idx:
+                    if len(entry) > i and entry[i]:
+                        e = str(entry[i]).strip().lower()
+                        if e and "@" in e:
+                            found.append(e)
+                if found:
+                    rows.append((found, t))
 
         first = _pd_fetch_search_page(1)
         _collect(first)
@@ -198,13 +228,24 @@ def _partner_desk_hashes_js():
                     _collect(data)
 
         salt = 'gracia-partner-check-v1'
-        hashes = {hashlib.sha256((salt + e).encode('utf-8')).hexdigest()[:16] for e in emails}
-        js = json.dumps(sorted(hashes), separators=(',', ':'))
-        _PD_HASH_CACHE.update(ts=now, js=js)
-        return js
+        email_hashes = set()
+        firm_domains = set()
+        for found, t in rows:
+            for e in found:
+                email_hashes.add(hashlib.sha256((salt + e).encode('utf-8')).hexdigest()[:16])
+                d = e.split("@", 1)[1]
+                if d not in PD_FREEMAIL and t in PD_FIRM_TYPES:
+                    firm_domains.add(d)
+        domain_hashes = {hashlib.sha256((salt + "d:" + d).encode('utf-8')).hexdigest()[:16] for d in firm_domains}
+        _PD_HASH_CACHE.update(
+            ts=now,
+            emails=json.dumps(sorted(email_hashes), separators=(',', ':')),
+            domains=json.dumps(sorted(domain_hashes), separators=(',', ':')),
+        )
+        return _PD_HASH_CACHE
     except Exception as e:
         logger.error(f"partner-desk hash build failed (non-fatal): {e}")
-        return _PD_HASH_CACHE['js']
+        return _PD_HASH_CACHE
 
 
 _PD_ANALYZE_KEY = 'JK8h5Pq2L9aZ7rT3mN6bX'
@@ -385,7 +426,8 @@ a.pd-mail{
 }
 .pd-result{margin-top:.8rem;font-weight:600;min-height:1.4em}
 .pd-result.ok{color:var(--ledger)}
-.pd-result.taken{color:var(--warn)}
+.pd-result.taken{color:#7A2E1D}
+.pd-result.firm{color:var(--warn)}
 footer{
   margin-top:3.25rem;padding-top:1rem;border-top:1px solid var(--hairline);
   font-size:.82rem;color:var(--muted);line-height:1.55;
@@ -523,7 +565,7 @@ footer p{margin:0 0 .55rem}
 
     <div class="checkbox-panel">
       <h2 style="margin-top:0;padding-top:0;border-top:none">Name check — nothing leaves your browser</h2>
-      <p class="small">Type a client's email address. The check runs locally in this page against an encrypted copy of my list — open your browser's developer tools (Network tab) and verify for yourself: nothing is transmitted, nothing is recorded. If the email is already in my book, you'll see it here, I never know you looked, and the conversation stops there. If it's available, email me and we'll register them.</p>
+      <p class="small">Type a client's email address. The check runs locally in this page against an encrypted copy of my list — open your browser's developer tools (Network tab) and verify for yourself: nothing is transmitted, nothing is recorded. If the email is already in my book, you'll see it here, I never know you looked, and the conversation stops there. If the person is new to me but I have existing relationships at their firm, you'll see that too, and we agree the scope before you register. Otherwise: available, yours to register.</p>
       <input type="email" id="pd-email" placeholder="client@example.com" autocomplete="off">
       <button class="pd-btn" id="pd-check" style="margin-left:.4rem">Check</button>
       <div class="pd-result" id="pd-result"></div>
@@ -538,7 +580,8 @@ footer p{margin:0 0 .55rem}
 </div>
 <script>
 (function(){
-  var HASHES = new Set(__EMAIL_HASHES__);
+  var EMAILS = new Set(__EMAIL_HASHES__);
+  var DOMAINS = new Set(__DOMAIN_HASHES__);
   var SALT = 'gracia-partner-check-v1';
   var selected = '';
   var radios = document.querySelectorAll('input[name=pdtrack]');
@@ -568,9 +611,8 @@ footer p{margin:0 0 .55rem}
       yes.scrollIntoView({behavior:'smooth', block:'nearest'});
     }
   });
-  async function hashEmail(email){
-    var norm = email.trim().toLowerCase();
-    var data = new TextEncoder().encode(SALT + norm);
+  async function pdHash(s){
+    var data = new TextEncoder().encode(SALT + s);
     var buf = await crypto.subtle.digest('SHA-256', data);
     return Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,'0');}).join('').slice(0,16);
   }
@@ -580,15 +622,22 @@ footer p{margin:0 0 .55rem}
     var val = (input.value || '').trim();
     out.className = 'pd-result';
     if (!val || val.indexOf('@') < 0) { out.textContent = 'Enter a full email address.'; return; }
-    if (HASHES.size === 0) { out.textContent = 'The check is temporarily offline — email me the name instead.'; return; }
+    if (EMAILS.size === 0) { out.textContent = 'The check is temporarily offline — email me the name instead.'; return; }
     if (!window.crypto || !crypto.subtle) { out.textContent = 'Your browser does not support the local check — email me the name instead.'; return; }
-    var h = await hashEmail(val);
-    if (HASHES.has(h)) {
+    var norm = val.trim().toLowerCase();
+    var h = await pdHash(norm);
+    if (EMAILS.has(h)) {
       out.textContent = 'Already in my book — the conversation stops there. I never know you looked.';
       out.className = 'pd-result taken';
     } else {
-      out.textContent = 'Available — this one is yours to register.';
-      out.className = 'pd-result ok';
+      var dh = await pdHash('d:' + norm.split('@')[1]);
+      if (DOMAINS.has(dh)) {
+        out.textContent = 'This person is new to me, but I have existing relationships at their firm. Email me before registering and we agree the scope up front.';
+        out.className = 'pd-result firm';
+      } else {
+        out.textContent = 'Available — this one is yours to register.';
+        out.className = 'pd-result ok';
+      }
     }
   }
   document.getElementById('pd-check').addEventListener('click', runCheck);
@@ -1371,10 +1420,11 @@ def lambda_handler(event, context):
                 'body': f'<p style="font-family:sans-serif;padding:40px">Logged in as {_mint_email}.<br><br><a href="{_mint_link}">Open web-bid test link (Positron)</a></p>'}
 
     if query_params.get('view') == 'partner-desk':
+        _pd_sets = _partner_desk_hash_sets()
         return {
             'statusCode': 200,
             'headers': {'Content-Type': 'text/html; charset=utf-8'},
-            'body': PARTNER_DESK_HTML.replace('__EMAIL_HASHES__', _partner_desk_hashes_js()),
+            'body': PARTNER_DESK_HTML.replace('__EMAIL_HASHES__', _pd_sets['emails']).replace('__DOMAIN_HASHES__', _pd_sets['domains']),
         }
 
     # Admin: mint a Syndicate Dashboard magic link for any email, no login
