@@ -635,7 +635,7 @@ footer p{margin:0 0 .55rem}
         out.textContent = 'This person is new to me, but I have existing relationships at their firm. Email me before registering and we agree the scope up front.';
         out.className = 'pd-result firm';
       } else {
-        out.textContent = 'Available — this one is yours to register.';
+        out.textContent = 'Available — this one is yours to register. And like every check, the name never left your browser: I cannot see it, now or ever.';
         out.className = 'pd-result ok';
       }
     }
