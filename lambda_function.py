@@ -142,27 +142,63 @@ DESK_URL = "https://desk.graciagroup.com"
 _PD_HASH_CACHE = {'ts': 0.0, 'js': '[]'}
 
 
+PD_SEARCH_ID = 19530439  # "S: Weekly Mailer Leads" focused list
+
+
+def _pd_fetch_search_page(page):
+    url = (
+        "https://api.pipelinecrm.com/api/v3/searches/"
+        + str(PD_SEARCH_ID)
+        + "/perform.json?per_page=200&page=" + str(page)
+        + "&api_key=ZRMHN4uJotjRDcZa8hKi"
+        + "&app_key=571978be28bd3b5b515a2cc5db96b674"
+    )
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode())
+
+
 def _partner_desk_hashes_js():
     """Build the JS array of truncated salted email hashes for the
-    partner-desk name check. Cached in-module for 15 minutes. Any failure
-    returns the last good value (or '[]') so the page still renders with
-    the checker in its offline state."""
+    partner-desk name check, from the 'S: Weekly Mailer Leads' focused
+    list (Pipeline saved search 19530439) — skinny (name, email) rows,
+    not people.json. Cached in-module for 15 minutes. Any failure
+    returns the last good value (or '[]') so the page still renders
+    with the checker in its offline state."""
     import time
     import hashlib
+    import concurrent.futures
     now = time.time()
     if _PD_HASH_CACHE['js'] != '[]' and now - _PD_HASH_CACHE['ts'] < 900:
         return _PD_HASH_CACHE['js']
     try:
-        s3 = boto3.client('s3')
-        obj = s3.get_object(Bucket='full-pipeline-cache', Key='people.json')
-        data = json.loads(obj['Body'].read().decode('utf-8'))
-        people = data.get('people', []) if isinstance(data, dict) else data
+        emails = set()
+
+        def _collect(data):
+            cols = [c.get("id") for c in (data.get("columns") or [])]
+            if "person_email" not in cols:
+                raise RuntimeError("focused list has no person_email column")
+            i_email = cols.index("person_email")
+            for entry in (data.get("entries") or []):
+                if isinstance(entry, list) and len(entry) > i_email:
+                    e = (entry[i_email] or "").strip().lower()
+                    if e and "@" in e:
+                        emails.add(e)
+
+        first = _pd_fetch_search_page(1)
+        _collect(first)
+        pagination = first.get("pagination") or {}
+        try:
+            pages = min(int(pagination.get("pages") or 1), 25)
+        except (TypeError, ValueError):
+            pages = 1
+        if pages > 1:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+                for data in ex.map(_pd_fetch_search_page, range(2, pages + 1)):
+                    _collect(data)
+
         salt = 'gracia-partner-check-v1'
-        hashes = set()
-        for p in people:
-            email = (p.get('email') or '').strip().lower()
-            if email and '@' in email:
-                hashes.add(hashlib.sha256((salt + email).encode('utf-8')).hexdigest()[:16])
+        hashes = {hashlib.sha256((salt + e).encode('utf-8')).hexdigest()[:16] for e in emails}
         js = json.dumps(sorted(hashes), separators=(',', ':'))
         _PD_HASH_CACHE.update(ts=now, js=js)
         return js
