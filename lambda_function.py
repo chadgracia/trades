@@ -1310,6 +1310,27 @@ def lambda_handler(event, context):
             'body': PARTNER_DESK_HTML.replace('__EMAIL_HASHES__', _partner_desk_hashes_js()),
         }
 
+    # Admin: mint a Syndicate Dashboard magic link for any email, no login
+    # required on this browser -- admin_key is the sole gate, same shared
+    # key as the diagnostic route above.
+    if query_params.get('mint_for') and query_params.get('admin_key') == 'JK8h5Pq2L9aZ7rT3mN6bX':
+        _mf_email = query_params.get('mint_for').strip().lower()
+        _mf_token = _make_handoff_token(_mf_email)
+        _mf_link = f"{SYNDICATE_DASH_URL}/?sso={urllib.parse.quote(_mf_token, safe='')}"
+        _mf_link_safe = html_mod.escape(_mf_link, quote=True)
+        return {'statusCode': 200, 'headers': {'Content-Type': 'text/html'},
+                'body': f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Syndicate Dashboard link</title></head>
+<body style="font-family:sans-serif;padding:40px">
+  <p>Magic link for {html_mod.escape(_mf_email)} (valid 1 hour):</p>
+  <p>
+    <input id="mf-link" type="text" readonly value="{_mf_link_safe}"
+           style="width:90%;max-width:640px;padding:8px;font-family:monospace">
+    <button onclick="navigator.clipboard.writeText(document.getElementById('mf-link').value)">Copy</button>
+  </p>
+  <p><a href="{_mf_link_safe}">{html_mod.escape(_mf_link)}</a></p>
+</body></html>'''}
+
     if query_params.get('signout') == '1':
         return {
             'statusCode': 303,
