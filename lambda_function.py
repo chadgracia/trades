@@ -139,6 +139,38 @@ AUCTIONS_BUCKET = "full-pipeline-cache"
 AUCTIONS_KEY = "auctions.json"
 DESK_URL = "https://desk.graciagroup.com"
 
+_PD_HASH_CACHE = {'ts': 0.0, 'js': '[]'}
+
+
+def _partner_desk_hashes_js():
+    """Build the JS array of truncated salted email hashes for the
+    partner-desk name check. Cached in-module for 15 minutes. Any failure
+    returns the last good value (or '[]') so the page still renders with
+    the checker in its offline state."""
+    import time
+    import hashlib
+    now = time.time()
+    if _PD_HASH_CACHE['js'] != '[]' and now - _PD_HASH_CACHE['ts'] < 900:
+        return _PD_HASH_CACHE['js']
+    try:
+        s3 = boto3.client('s3')
+        obj = s3.get_object(Bucket='full-pipeline-cache', Key='people.json')
+        data = json.loads(obj['Body'].read().decode('utf-8'))
+        people = data.get('people', []) if isinstance(data, dict) else data
+        salt = 'gracia-partner-check-v1'
+        hashes = set()
+        for p in people:
+            email = (p.get('email') or '').strip().lower()
+            if email and '@' in email:
+                hashes.add(hashlib.sha256((salt + email).encode('utf-8')).hexdigest()[:16])
+        js = json.dumps(sorted(hashes), separators=(',', ':'))
+        _PD_HASH_CACHE.update(ts=now, js=js)
+        return js
+    except Exception as e:
+        logger.error(f"partner-desk hash build failed (non-fatal): {e}")
+        return _PD_HASH_CACHE['js']
+
+
 PARTNER_DESK_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -159,6 +191,7 @@ PARTNER_DESK_HTML = """<!DOCTYPE html>
   --ledger-soft:#EDF3EE;
   --hairline:#D8DCD4;
   --tint:#F3F4F0;
+  --warn:#8A5A16;
 }
 *,*::before,*::after{box-sizing:inherit}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
@@ -172,7 +205,6 @@ body{
   -webkit-font-smoothing:antialiased;
 }
 .sheet{max-width:660px;margin:0 auto;padding:3.5rem 1.25rem 5rem}
-img{max-width:100%}
 .letterhead{
   display:flex;justify-content:space-between;align-items:baseline;gap:1rem;
   border-bottom:2px solid var(--ink);
@@ -181,11 +213,10 @@ img{max-width:100%}
 .letterhead .firm{font-weight:600;font-size:1.02rem;letter-spacing:.01em}
 .letterhead .via{font-size:.85rem;color:var(--muted);text-align:right}
 h1{
-  font-size:2rem;line-height:1.22;font-weight:600;
+  font-size:1.85rem;line-height:1.25;font-weight:600;
   margin:0 0 1.1rem;letter-spacing:-.01em;
 }
-.lede{font-size:1.12rem;line-height:1.6;margin:0 0 .9rem}
-.lede strong{font-weight:600}
+.lede{font-size:1.1rem;line-height:1.6;margin:0 0 .9rem}
 p{margin:0 0 .9rem}
 h2{
   font-size:1.02rem;font-weight:600;margin:2.75rem 0 .8rem;
@@ -197,7 +228,7 @@ a{color:var(--ledger);text-underline-offset:3px}
 .termwrap{overflow-x:auto;margin:1.4rem 0 .4rem}
 table.terms{
   width:100%;border-collapse:collapse;font-size:.95rem;line-height:1.45;
-  min-width:520px;
+  min-width:560px;
 }
 .terms caption{
   caption-side:top;text-align:left;font-style:italic;color:var(--muted);
@@ -208,33 +239,50 @@ table.terms{
   padding:.6rem .75rem;vertical-align:top;text-align:left;
 }
 .terms thead th{background:var(--tint);font-weight:600}
-.terms thead th.tier{width:33%}
-.terms td:first-child{color:var(--muted);width:24%}
+.terms thead th.tier{width:36%}
+.terms td:first-child{color:var(--muted);width:18%}
 .terms .num{font-weight:600;font-variant-numeric:tabular-nums}
 .terms .pick{background:var(--ledger-soft)}
 .terms .pick .num{color:var(--ledger)}
-.promise{
-  background:var(--ledger-soft);
-  border-left:3px solid var(--ledger);
-  padding:1rem 1.15rem;margin:1.3rem 0;
-}
-.promise p{margin:0}
-.promise p+p{margin-top:.6rem}
+ul.plain{margin:.4rem 0 .9rem;padding-left:1.2rem}
+ul.plain li{margin-bottom:.55rem}
 ol.steps{margin:1rem 0 0;padding-left:1.4rem}
 ol.steps li{margin-bottom:.85rem;padding-left:.35rem}
 ol.steps li::marker{font-weight:600;color:var(--ledger)}
-ul.plain{margin:.4rem 0 .9rem;padding-left:1.2rem}
-ul.plain li{margin-bottom:.55rem}
-.cta{
-  margin:2.2rem 0 0;padding:1.3rem 1.25rem;
-  border:1px solid var(--ink);
+.choices{margin:1.2rem 0 0}
+.choice{
+  display:block;border:1px solid var(--hairline);
+  padding:.9rem 1rem;margin-bottom:.7rem;cursor:pointer;
+  background:var(--paper);
 }
-.cta p{margin:0 0 .9rem}
-.cta a.button{
+.choice:hover{background:var(--tint)}
+.choice input{margin-right:.6rem;accent-color:var(--ledger)}
+.choice.selected{border-color:var(--ledger);background:var(--ledger-soft)}
+.choice strong{font-weight:600}
+button.pd-btn{
+  display:inline-block;background:var(--ledger);color:#fff;border:none;
+  padding:.6rem 1.2rem;font-weight:600;font-size:.98rem;cursor:pointer;
+  font-family:inherit;
+}
+button.pd-btn:disabled{background:var(--hairline);color:var(--muted);cursor:default}
+button.pd-btn:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+a.pd-mail{
   display:inline-block;background:var(--ledger);color:#fff;
-  padding:.6rem 1.1rem;text-decoration:none;font-weight:600;font-size:.98rem;
+  padding:.6rem 1.2rem;text-decoration:none;font-weight:600;font-size:.98rem;
 }
-.cta a.button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.reveal{display:none;margin-top:1.6rem}
+.reveal.open{display:block}
+.checkbox-panel{
+  border:1px solid var(--ink);padding:1.2rem 1.25rem;margin-top:1rem;
+}
+.checkbox-panel input[type=email]{
+  font-family:inherit;font-size:1rem;padding:.55rem .7rem;
+  border:1px solid var(--hairline);width:100%;max-width:340px;
+  background:var(--paper);color:var(--ink);
+}
+.pd-result{margin-top:.8rem;font-weight:600;min-height:1.4em}
+.pd-result.ok{color:var(--ledger)}
+.pd-result.taken{color:var(--warn)}
 footer{
   margin-top:3.25rem;padding-top:1rem;border-top:1px solid var(--hairline);
   font-size:.82rem;color:var(--muted);line-height:1.55;
@@ -242,7 +290,7 @@ footer{
 footer p{margin:0 0 .55rem}
 @media (max-width:520px){
   .sheet{padding-top:2.25rem}
-  h1{font-size:1.6rem}
+  h1{font-size:1.5rem}
   .letterhead{flex-direction:column;gap:.15rem}
   .letterhead .via{text-align:left}
 }
@@ -259,93 +307,124 @@ footer p{margin:0 0 .55rem}
     <div class="via">Chad Gracia · Registered Representative, Rainmaker Securities, LLC</div>
   </div>
 
-  <h1>Your client. My inventory. Half the fee — in writing, before you introduce anyone.</h1>
+  <h1>Reopening my desk to co-brokers: get paid on every trade, for two years, in writing.</h1>
 
-  <p class="lede">You have buyers and sellers who want names I trade. Sending them to me has meant losing them. This program fixes that: <strong>50% of my gross fee on your client's first trade, 33% on every trade after that, for 18 months</strong> — on any name in my book, papered on Rainmaker's standard fee-sharing agreement before your client hears my name.</p>
+  <p class="lede">I've closed nearly $200M in secondary trades — almost none of it with co-brokers. I stopped working with brokers a few years ago. Not because the relationships weren't valuable, but because the process didn't work: constant back-and-forth as terms shifted, wasted hours and miscommunication, and more than once discovering — after all that — that I was already in touch with the referred client. Delays and misinformation made closing deals almost impossible. This is me opening that door again, in a way built to solve those problems.</p>
 
-  <p>I've spent 25 years in private secondaries. Every trade in this program executes on my platform, which means every trade your client makes is visible, attributable, and payable to you. There's no honor system.</p>
+  <p>And one thing up front, because it matters in our business: the term defines when I owe you money, not when I stop respecting where a relationship came from.</p>
 
-  <h2>The terms</h2>
+  <h2>The problem as I see it</h2>
+
+  <p>You have buyers and sellers who want names I trade, and I rarely bring co-brokers my best inventory because my own book is deep enough to close it. When brokers do work together, the standard process burns time and breeds miscommunication — both of which kill deals — and once a tail expires, introductions in either direction pay nobody. I know I've lost clients to other brokers exactly this way, and never saw a follow-up payment. The traditional arrangement seems designed to minimize closed trades.</p>
+
+  <h2>The dashboard</h2>
+
+  <p>Everything in this program runs on my platform, and you get a dashboard for your registered clients: where each one stands, from onboarding paperwork (IQF) through every live trade — matched, introduced, LOI, transfer notice, SPA, wired. You're not asking me what happened; you're looking at it.</p>
+
+  <h2>The two tracks</h2>
+
+  <p>For a small number of brokers I trust, I'm considering the following. The old standard was 50/50 with a 12-month tail on one trade. The new version:</p>
 
   <div class="termwrap">
   <table class="terms">
-    <caption>You choose one track per client when you register the name. It's locked for the term — no mid-stream switching, no disputes about which rules applied.</caption>
     <thead>
       <tr>
-        <th scope="col">Term</th>
+        <th scope="col"></th>
         <th scope="col" class="tier pick">Partner track</th>
         <th scope="col" class="tier">Referral track</th>
       </tr>
     </thead>
     <tbody>
       <tr>
+        <td>In one line</td>
+        <td class="pick">We work together to close multiple deals with your client, and you're paid on all of them for two years.</td>
+        <td>Your client sees only the trade under discussion, and I don't reach out to them otherwise during the tail.</td>
+      </tr>
+      <tr>
         <td>First trade</td>
         <td class="pick"><span class="num">50%</span> of my gross fee</td>
         <td><span class="num">50%</span> of my gross fee</td>
       </tr>
       <tr>
-        <td>Every trade after</td>
-        <td class="pick"><span class="num">33%</span> of my gross fee, any name</td>
-        <td>—</td>
+        <td>Follow-on trades</td>
+        <td class="pick"><span class="num">50%</span> of the second trade, then <span class="num">33%</span> of every trade after — on any name in my book</td>
+        <td>None — the referral covers the first trade only</td>
       </tr>
       <tr>
         <td>Term</td>
-        <td class="pick"><span class="num">18 months</span> from the introduction, hard end</td>
+        <td class="pick"><span class="num">24 months</span> from the introduction, hard end</td>
         <td><span class="num">12 months</span> from the introduction, hard end</td>
       </tr>
       <tr>
         <td>What counts</td>
-        <td class="pick" colspan="2">Any trade initiated before the term ends — transfer notice, LOI, purchase agreement signed, or order confirmed — pays out even if it closes after.</td>
+        <td class="pick">Any trade initiated before the term ends — transfer notice, LOI, purchase agreement, or confirmed order — pays out even if it closes after.</td>
+        <td>Same, for the introduced trade.</td>
       </tr>
       <tr>
-        <td>Your client gets</td>
-        <td class="pick">Full platform access: live indications, deal pages, auctions, my newsletter. Every email I send them is working for your 33%.</td>
-        <td>Introduction to the specific trade only. I don't market to them. You run the relationship.</td>
+        <td>Your client sees</td>
+        <td class="pick">My full book: live indications, deal pages, auctions, and trade updates. Everything I send them is working toward your next check.</td>
+        <td>Only the trade under discussion — a live deal page with the rest of my book and other links removed. You run the relationship.</td>
       </tr>
       <tr>
-        <td>Paperwork</td>
-        <td class="pick" colspan="2">One master fee-sharing agreement on Rainmaker's standard form, signed once. Each client is added by a one-page schedule. Countersigned by Rainmaker's president.</td>
+        <td>You're kept in</td>
+        <td class="pick">CC on all correspondence through the first two trades; after that, email updates on every new deal and status change — and the dashboard, always.</td>
+        <td>CC on the trade, start to finish.</td>
       </tr>
     </tbody>
   </table>
   </div>
 
-  <h2>You never show me a name without protection</h2>
-
-  <div class="promise">
-    <p><strong>The agreement comes first — before any client is ever named.</strong> The master fee-sharing agreement lists no clients and commits you to nothing. It exists so that the moment you ask about a name, that name is contractually off-limits to me.</p>
-    <p><strong>Every name you check is protected, registered or not.</strong> Under the agreement, any name you submit for an availability check cannot be solicited by me for 18 months — whether it turns out to be available, already on my list, or a client you decide not to register. You get a straight answer: available, or not. If they're already among the roughly 2,500 investors on my list, we both save the paperwork. Either way, a name you ask about stays your name.</p>
-  </div>
-
   <h2>Why the accounting holds up</h2>
 
-  <p>You've probably been burned by referral deals that depended on the other side volunteering what happened. This one doesn't:</p>
+  <p>You've probably lost clients after an introduction because you couldn't see what happened past the first trade — I have too. Here it works differently:</p>
 
   <ul class="plain">
-    <li><strong>Trades happen on my rails.</strong> Indications, introductions, orders, and closings all run through my platform. There is no trade I could quietly do off the books — the books are the platform.</li>
+    <li><strong>Trades happen on my rails.</strong> Indications, introductions, orders, and closings all run through my platform, so there's no trade that can quietly happen off the books.</li>
     <li><strong>You see the record.</strong> For each client you register: the introduction date, the term clock, and every trade — with your fee accrued against it.</li>
-    <li><strong>You're paid when I'm paid.</strong> Your share is due concurrently with my commission, wired under the fee-sharing agreement. Not net of excuses, not annually.</li>
-    <li><strong>It's Rainmaker paper.</strong> The agreement is Rainmaker Securities' standard broker-dealer fee-sharing agreement — the same FINRA-arbitrable contract they use for every co-broke — not a side letter with me.</li>
+    <li><strong>You're paid when I'm paid.</strong> Your share is due concurrently with my commission, wired under the fee-sharing agreement.</li>
+    <li><strong>It's Rainmaker paper.</strong> Rainmaker Securities' standard broker-dealer fee-sharing agreement — the same FINRA-arbitrable contract they use for every co-broke — not a side letter with me.</li>
   </ul>
 
   <h2>How it works</h2>
 
   <ol class="steps">
-    <li><strong>Sign once.</strong> We execute the master fee-sharing agreement — Rainmaker's form, countersigned by their president, naming no clients. This happens one time, ever, and it's what makes step 2 safe.</li>
-    <li><strong>Availability check.</strong> Email me a client name or email address. You'll get back one word: available, or not — and either way, that name is now contractually protected from me for 18 months.</li>
+    <li><strong>Check the name.</strong> The availability check runs entirely in your browser — before you've signed or told me anything. Details at the bottom of this page.</li>
+    <li><strong>Sign once.</strong> The master fee-sharing agreement — Rainmaker's form, countersigned by their president, naming no clients. This happens one time, ever.</li>
     <li><strong>Register the client.</strong> A one-page schedule names your client, your track, and the dates. Signed electronically in minutes.</li>
-    <li><strong>Make the introduction.</strong> A three-way email connects me, you, and your client, and states on its face that it's made under our agreement. When your client responds, your term clock starts and your protection is perfected.</li>
+    <li><strong>Make the introduction.</strong> A three-way email connects me, you, and your client, and states on its face that it's made under our agreement. When your client responds, the clock starts.</li>
     <li><strong>Get paid.</strong> Your client trades; your share wires when my commission does. You see every entry.</li>
   </ol>
 
   <h2>Who this is for</h2>
 
-  <p>Registered representatives and FINRA-member broker-dealers. If you're outside the U.S. and unregistered, there's a compliant finder path — the terms differ, and clients who are U.S. persons face restrictions, so ask me and we'll walk through it.</p>
+  <p>Registered representatives and FINRA-member broker-dealers I've invited. If you're outside the U.S. and unregistered, there's a compliant finder path — the terms differ and U.S.-person clients face restrictions, so ask me and we'll walk through it.</p>
 
-  <div class="cta">
-    <p><strong>Start with the agreement.</strong> It names no clients, costs nothing, and commits you to nothing — it's the thing that makes it safe to ever mention a name to me. Reply and I'll send it; it can be countersigned this week, and the first name you check after that is already protected.</p>
-    <a class="button" href="mailto:cgracia@rainmakersecurities.com?subject=Partner%20agreement">Send me the agreement</a>
-    <p class="small muted" style="margin:.9rem 0 0">Chad Gracia · cgracia@rainmakersecurities.com</p>
+  <h2>Which of these would you consider?</h2>
+
+  <div class="choices">
+    <label class="choice"><input type="radio" name="pdtrack" value="Partner track"><strong>Partner track</strong> — 50% of my fee on your client's first two trades, then 33% of every trade they do for the rest of the two years, on any name in my book.</label>
+    <label class="choice"><input type="radio" name="pdtrack" value="Referral track"><strong>Referral track</strong> — 50% of my fee on the trade you introduce; your client sees only that trade, and I don't reach out to them during the 12-month tail.</label>
+    <label class="choice"><input type="radio" name="pdtrack" value="Neither"><strong>Neither</strong> — understood; these two tracks are the only way I work with co-brokers now.</label>
+  </div>
+
+  <button class="pd-btn" id="pd-submit" disabled>Continue</button>
+
+  <div class="reveal" id="pd-neither">
+    <p>Fair enough — no hard feelings, and nothing else changes between us. If you ever want to revisit it, this page isn't going anywhere.</p>
+    <a class="pd-mail" href="mailto:cgracia@rainmakersecurities.com?subject=Co-broker%20program%20-%20not%20for%20me">Tell me anyway</a>
+  </div>
+
+  <div class="reveal" id="pd-yes">
+    <p id="pd-yes-line"></p>
+    <a class="pd-mail" id="pd-mail-link" href="mailto:cgracia@rainmakersecurities.com">Email me your answer</a>
+
+    <div class="checkbox-panel">
+      <h2 style="margin-top:0;padding-top:0;border-top:none">Name check — nothing leaves your browser</h2>
+      <p class="small">Type a client's email address. The check runs locally in this page against an encrypted copy of my list — open your browser's developer tools (Network tab) and verify for yourself: nothing is transmitted, nothing is recorded. If the email is already in my book, you'll see it here, I never know you looked, and the conversation stops there. If it's available, email me and we'll register them.</p>
+      <input type="email" id="pd-email" placeholder="client@example.com" autocomplete="off">
+      <button class="pd-btn" id="pd-check" style="margin-left:.4rem">Check</button>
+      <div class="pd-result" id="pd-result"></div>
+    </div>
   </div>
 
   <footer>
@@ -354,6 +433,65 @@ footer p{margin:0 0 .55rem}
   </footer>
 
 </div>
+<script>
+(function(){
+  var HASHES = new Set(__EMAIL_HASHES__);
+  var SALT = 'gracia-partner-check-v1';
+  var selected = '';
+  var radios = document.querySelectorAll('input[name=pdtrack]');
+  var submitBtn = document.getElementById('pd-submit');
+  radios.forEach(function(r){
+    r.addEventListener('change', function(){
+      selected = r.value;
+      submitBtn.disabled = false;
+      document.querySelectorAll('.choice').forEach(function(c){c.classList.remove('selected');});
+      r.closest('.choice').classList.add('selected');
+    });
+  });
+  submitBtn.addEventListener('click', function(){
+    var neither = document.getElementById('pd-neither');
+    var yes = document.getElementById('pd-yes');
+    neither.classList.remove('open');
+    yes.classList.remove('open');
+    if (selected === 'Neither') {
+      neither.classList.add('open');
+      neither.scrollIntoView({behavior:'smooth', block:'nearest'});
+    } else if (selected) {
+      document.getElementById('pd-yes-line').textContent =
+        'Good — the ' + selected + ' it is. Two ways to move: email me your answer so we can start the paperwork, or test a name first below.';
+      document.getElementById('pd-mail-link').href =
+        'mailto:cgracia@rainmakersecurities.com?subject=' + encodeURIComponent('Co-broker program: ' + selected);
+      yes.classList.add('open');
+      yes.scrollIntoView({behavior:'smooth', block:'nearest'});
+    }
+  });
+  async function hashEmail(email){
+    var norm = email.trim().toLowerCase();
+    var data = new TextEncoder().encode(SALT + norm);
+    var buf = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,'0');}).join('').slice(0,16);
+  }
+  async function runCheck(){
+    var input = document.getElementById('pd-email');
+    var out = document.getElementById('pd-result');
+    var val = (input.value || '').trim();
+    out.className = 'pd-result';
+    if (!val || val.indexOf('@') < 0) { out.textContent = 'Enter a full email address.'; return; }
+    if (HASHES.size === 0) { out.textContent = 'The check is temporarily offline — email me the name instead.'; return; }
+    if (!window.crypto || !crypto.subtle) { out.textContent = 'Your browser does not support the local check — email me the name instead.'; return; }
+    var h = await hashEmail(val);
+    if (HASHES.has(h)) {
+      out.textContent = 'Already in my book — the conversation stops there. I never know you looked.';
+      out.className = 'pd-result taken';
+    } else {
+      out.textContent = 'Available — this one is yours to register.';
+      out.className = 'pd-result ok';
+    }
+  }
+  document.getElementById('pd-check').addEventListener('click', runCheck);
+  document.getElementById('pd-email').addEventListener('keydown', function(e){ if (e.key === 'Enter') runCheck(); });
+})();
+</script>
 </body>
 </html>
 """
@@ -1133,7 +1271,7 @@ def lambda_handler(event, context):
         return {
             'statusCode': 200,
             'headers': {'Content-Type': 'text/html; charset=utf-8'},
-            'body': PARTNER_DESK_HTML,
+            'body': PARTNER_DESK_HTML.replace('__EMAIL_HASHES__', _partner_desk_hashes_js()),
         }
 
     if query_params.get('signout') == '1':
