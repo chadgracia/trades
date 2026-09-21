@@ -139,6 +139,225 @@ AUCTIONS_BUCKET = "full-pipeline-cache"
 AUCTIONS_KEY = "auctions.json"
 DESK_URL = "https://desk.graciagroup.com"
 
+PARTNER_DESK_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Partner Desk — Gracia Group</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<style>
+:root{
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+  --paper:#FBFBF8;
+  --ink:#1C2126;
+  --muted:#5C6670;
+  --ledger:#1F5D45;
+  --ledger-soft:#EDF3EE;
+  --hairline:#D8DCD4;
+  --tint:#F3F4F0;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body{margin:0;padding:0}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:"Source Serif 4",Georgia,"Times New Roman",serif;
+  font-size:17px;
+  line-height:1.65;
+  -webkit-font-smoothing:antialiased;
+}
+.sheet{max-width:660px;margin:0 auto;padding:3.5rem 1.25rem 5rem}
+img{max-width:100%}
+.letterhead{
+  display:flex;justify-content:space-between;align-items:baseline;gap:1rem;
+  border-bottom:2px solid var(--ink);
+  padding-bottom:.6rem;margin-bottom:2.75rem;
+}
+.letterhead .firm{font-weight:600;font-size:1.02rem;letter-spacing:.01em}
+.letterhead .via{font-size:.85rem;color:var(--muted);text-align:right}
+h1{
+  font-size:2rem;line-height:1.22;font-weight:600;
+  margin:0 0 1.1rem;letter-spacing:-.01em;
+}
+.lede{font-size:1.12rem;line-height:1.6;margin:0 0 .9rem}
+.lede strong{font-weight:600}
+p{margin:0 0 .9rem}
+h2{
+  font-size:1.02rem;font-weight:600;margin:2.75rem 0 .8rem;
+  padding-top:1.4rem;border-top:1px solid var(--hairline);
+}
+a{color:var(--ledger);text-underline-offset:3px}
+.muted{color:var(--muted)}
+.small{font-size:.9rem}
+.termwrap{overflow-x:auto;margin:1.4rem 0 .4rem}
+table.terms{
+  width:100%;border-collapse:collapse;font-size:.95rem;line-height:1.45;
+  min-width:520px;
+}
+.terms caption{
+  caption-side:top;text-align:left;font-style:italic;color:var(--muted);
+  font-size:.9rem;padding-bottom:.5rem;
+}
+.terms th,.terms td{
+  border:1px solid var(--hairline);
+  padding:.6rem .75rem;vertical-align:top;text-align:left;
+}
+.terms thead th{background:var(--tint);font-weight:600}
+.terms thead th.tier{width:33%}
+.terms td:first-child{color:var(--muted);width:24%}
+.terms .num{font-weight:600;font-variant-numeric:tabular-nums}
+.terms .pick{background:var(--ledger-soft)}
+.terms .pick .num{color:var(--ledger)}
+.promise{
+  background:var(--ledger-soft);
+  border-left:3px solid var(--ledger);
+  padding:1rem 1.15rem;margin:1.3rem 0;
+}
+.promise p{margin:0}
+.promise p+p{margin-top:.6rem}
+ol.steps{margin:1rem 0 0;padding-left:1.4rem}
+ol.steps li{margin-bottom:.85rem;padding-left:.35rem}
+ol.steps li::marker{font-weight:600;color:var(--ledger)}
+ul.plain{margin:.4rem 0 .9rem;padding-left:1.2rem}
+ul.plain li{margin-bottom:.55rem}
+.cta{
+  margin:2.2rem 0 0;padding:1.3rem 1.25rem;
+  border:1px solid var(--ink);
+}
+.cta p{margin:0 0 .9rem}
+.cta a.button{
+  display:inline-block;background:var(--ledger);color:#fff;
+  padding:.6rem 1.1rem;text-decoration:none;font-weight:600;font-size:.98rem;
+}
+.cta a.button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+footer{
+  margin-top:3.25rem;padding-top:1rem;border-top:1px solid var(--hairline);
+  font-size:.82rem;color:var(--muted);line-height:1.55;
+}
+footer p{margin:0 0 .55rem}
+@media (max-width:520px){
+  .sheet{padding-top:2.25rem}
+  h1{font-size:1.6rem}
+  .letterhead{flex-direction:column;gap:.15rem}
+  .letterhead .via{text-align:left}
+}
+@media (prefers-reduced-motion: reduce){
+  *{transition:none!important;animation:none!important}
+}
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="letterhead">
+    <div class="firm">Gracia Group</div>
+    <div class="via">Chad Gracia · Registered Representative, Rainmaker Securities, LLC</div>
+  </div>
+
+  <h1>Your client. My inventory. Half the fee — in writing, before you introduce anyone.</h1>
+
+  <p class="lede">You have buyers and sellers who want names I trade. Sending them to me has meant losing them. This program fixes that: <strong>50% of my gross fee on your client's first trade, 33% on every trade after that, for 18 months</strong> — on any name in my book, papered on Rainmaker's standard fee-sharing agreement before your client hears my name.</p>
+
+  <p>I've spent 25 years in private secondaries. Every trade in this program executes on my platform, which means every trade your client makes is visible, attributable, and payable to you. There's no honor system.</p>
+
+  <h2>The terms</h2>
+
+  <div class="termwrap">
+  <table class="terms">
+    <caption>You choose one track per client when you register the name. It's locked for the term — no mid-stream switching, no disputes about which rules applied.</caption>
+    <thead>
+      <tr>
+        <th scope="col">Term</th>
+        <th scope="col" class="tier pick">Partner track</th>
+        <th scope="col" class="tier">Referral track</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>First trade</td>
+        <td class="pick"><span class="num">50%</span> of my gross fee</td>
+        <td><span class="num">50%</span> of my gross fee</td>
+      </tr>
+      <tr>
+        <td>Every trade after</td>
+        <td class="pick"><span class="num">33%</span> of my gross fee, any name</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>Term</td>
+        <td class="pick"><span class="num">18 months</span> from the introduction, hard end</td>
+        <td><span class="num">12 months</span> from the introduction, hard end</td>
+      </tr>
+      <tr>
+        <td>What counts</td>
+        <td class="pick" colspan="2">Any trade initiated before the term ends — transfer notice, LOI, purchase agreement signed, or order confirmed — pays out even if it closes after.</td>
+      </tr>
+      <tr>
+        <td>Your client gets</td>
+        <td class="pick">Full platform access: live indications, deal pages, auctions, my newsletter. Every email I send them is working for your 33%.</td>
+        <td>Introduction to the specific trade only. I don't market to them. You run the relationship.</td>
+      </tr>
+      <tr>
+        <td>Paperwork</td>
+        <td class="pick" colspan="2">One master fee-sharing agreement on Rainmaker's standard form, signed once. Each client is added by a one-page schedule. Countersigned by Rainmaker's president.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>You never show me a name without protection</h2>
+
+  <div class="promise">
+    <p><strong>The agreement comes first — before any client is ever named.</strong> The master fee-sharing agreement lists no clients and commits you to nothing. It exists so that the moment you ask about a name, that name is contractually off-limits to me.</p>
+    <p><strong>Every name you check is protected, registered or not.</strong> Under the agreement, any name you submit for an availability check cannot be solicited by me for 18 months — whether it turns out to be available, already on my list, or a client you decide not to register. You get a straight answer: available, or not. If they're already among the roughly 2,500 investors on my list, we both save the paperwork. Either way, a name you ask about stays your name.</p>
+  </div>
+
+  <h2>Why the accounting holds up</h2>
+
+  <p>You've probably been burned by referral deals that depended on the other side volunteering what happened. This one doesn't:</p>
+
+  <ul class="plain">
+    <li><strong>Trades happen on my rails.</strong> Indications, introductions, orders, and closings all run through my platform. There is no trade I could quietly do off the books — the books are the platform.</li>
+    <li><strong>You see the record.</strong> For each client you register: the introduction date, the term clock, and every trade — with your fee accrued against it.</li>
+    <li><strong>You're paid when I'm paid.</strong> Your share is due concurrently with my commission, wired under the fee-sharing agreement. Not net of excuses, not annually.</li>
+    <li><strong>It's Rainmaker paper.</strong> The agreement is Rainmaker Securities' standard broker-dealer fee-sharing agreement — the same FINRA-arbitrable contract they use for every co-broke — not a side letter with me.</li>
+  </ul>
+
+  <h2>How it works</h2>
+
+  <ol class="steps">
+    <li><strong>Sign once.</strong> We execute the master fee-sharing agreement — Rainmaker's form, countersigned by their president, naming no clients. This happens one time, ever, and it's what makes step 2 safe.</li>
+    <li><strong>Availability check.</strong> Email me a client name or email address. You'll get back one word: available, or not — and either way, that name is now contractually protected from me for 18 months.</li>
+    <li><strong>Register the client.</strong> A one-page schedule names your client, your track, and the dates. Signed electronically in minutes.</li>
+    <li><strong>Make the introduction.</strong> A three-way email connects me, you, and your client, and states on its face that it's made under our agreement. When your client responds, your term clock starts and your protection is perfected.</li>
+    <li><strong>Get paid.</strong> Your client trades; your share wires when my commission does. You see every entry.</li>
+  </ol>
+
+  <h2>Who this is for</h2>
+
+  <p>Registered representatives and FINRA-member broker-dealers. If you're outside the U.S. and unregistered, there's a compliant finder path — the terms differ, and clients who are U.S. persons face restrictions, so ask me and we'll walk through it.</p>
+
+  <div class="cta">
+    <p><strong>Start with the agreement.</strong> It names no clients, costs nothing, and commits you to nothing — it's the thing that makes it safe to ever mention a name to me. Reply and I'll send it; it can be countersigned this week, and the first name you check after that is already protected.</p>
+    <a class="button" href="mailto:cgracia@rainmakersecurities.com?subject=Partner%20agreement">Send me the agreement</a>
+    <p class="small muted" style="margin:.9rem 0 0">Chad Gracia · cgracia@rainmakersecurities.com</p>
+  </div>
+
+  <footer>
+    <p>This page is a summary for discussion with professional intermediaries and is not an offer to buy or sell securities, investment advice, or a solicitation directed at investors. All terms are subject to Rainmaker Securities, LLC review and to an executed fee-sharing or finder agreement, which governs in full. Fee sharing is available only where permitted by applicable law and FINRA rules, including registration requirements. Securities transactions are conducted through Rainmaker Securities, LLC, member FINRA/SIPC.</p>
+    <p>Private link — please don't circulate.</p>
+  </footer>
+
+</div>
+</body>
+</html>
+"""
+
 
 def _live_auctions_for_nav():
     """[(auction_id, auction_dict), ...] for every open auction, read fresh
@@ -909,6 +1128,13 @@ def lambda_handler(event, context):
         _mint_link = f"{_wb}/?bid=138490563&name=Positron&sso={urllib.parse.quote(_mint_tok, safe='')}"
         return {'statusCode': 200, 'headers': {'Content-Type': 'text/html'},
                 'body': f'<p style="font-family:sans-serif;padding:40px">Logged in as {_mint_email}.<br><br><a href="{_mint_link}">Open web-bid test link (Positron)</a></p>'}
+
+    if query_params.get('view') == 'partner-desk':
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'text/html; charset=utf-8'},
+            'body': PARTNER_DESK_HTML,
+        }
 
     if query_params.get('signout') == '1':
         return {
