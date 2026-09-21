@@ -207,6 +207,73 @@ def _partner_desk_hashes_js():
         return _PD_HASH_CACHE['js']
 
 
+_PD_ANALYZE_KEY = 'JK8h5Pq2L9aZ7rT3mN6bX'
+
+_PD_ANALYZE_FREEMAIL = {
+    "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com", "icloud.com",
+    "me.com", "mac.com", "msn.com", "live.com", "comcast.net", "protonmail.com",
+    "proton.me", "yandex.ru", "yandex.com", "mail.ru", "gmx.com", "gmx.de", "web.de",
+    "ymail.com", "googlemail.com", "att.net", "verizon.net", "sbcglobal.net", "pm.me",
+    "hey.com", "fastmail.com", "qq.com", "163.com", "126.com", "hotmail.co.uk",
+    "yahoo.co.uk", "btinternet.com", "rogers.com", "shaw.ca", "bell.net", "ukr.net", "i.ua",
+}
+
+
+def _pd_analyze_report():
+    """Read-only breakdown of the 'S: Weekly Mailer Leads' Pipeline focused
+    list: row/email counts, freemail vs corporate split, domain headcounts,
+    and a per-column value breakdown. Mirrors the ad-hoc analysis script;
+    reuses _pd_fetch_search_page for the actual fetching. No writes."""
+    import collections
+    import concurrent.futures
+
+    out = []
+
+    def p(*a):
+        out.append(" ".join(str(x) for x in a))
+
+    first = _pd_fetch_search_page(1)
+    cols = [c.get("id") for c in (first.get("columns") or [])]
+    p("COLUMNS:", cols)
+    pages = int((first.get("pagination") or {}).get("pages") or 1)
+    p("PAGES:", pages)
+    all_pages = [first]
+    if pages > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+            all_pages += list(ex.map(_pd_fetch_search_page, range(2, pages + 1)))
+
+    i_email = cols.index("person_email")
+    rows = []
+    for d in all_pages:
+        for e in (d.get("entries") or []):
+            if isinstance(e, list) and len(e) > i_email and e[i_email]:
+                rows.append([str(x) if x is not None else "" for x in e])
+
+    emails = sorted({r[i_email].strip().lower() for r in rows if "@" in r[i_email]})
+    domains = collections.Counter(e.split("@", 1)[1] for e in emails)
+    corp = {d: c for d, c in domains.items() if d not in _PD_ANALYZE_FREEMAIL}
+    free_ct = sum(c for d, c in domains.items() if d in _PD_ANALYZE_FREEMAIL)
+
+    p("TOTAL ROWS:", len(rows), "| UNIQUE EMAILS:", len(emails))
+    p("FREEMAIL EMAILS:", free_ct, "| CORPORATE EMAILS:", len(emails) - free_ct)
+    p("UNIQUE CORPORATE DOMAINS:", len(corp))
+    multi = {d: c for d, c in corp.items() if c >= 2}
+    p("CORPORATE DOMAINS WITH 2+ PEOPLE:", len(multi))
+    p("TOP 30 DOMAINS BY HEADCOUNT:")
+    for d, c in sorted(corp.items(), key=lambda x: -x[1])[:30]:
+        p("  %4d  %s" % (c, d))
+    for j, cid in enumerate(cols):
+        if cid in ("person_email", "person_first_name", "person_id"):
+            continue
+        vals = collections.Counter(r[j] for r in rows if j < len(r) and r[j])
+        if 0 < len(vals) <= 40:
+            p("BREAKDOWN of column '%s':" % cid)
+            for v, c in vals.most_common(15):
+                p("  %4d  %s" % (c, v))
+
+    return "\n".join(out)
+
+
 PARTNER_DESK_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1330,6 +1397,20 @@ def lambda_handler(event, context):
   </p>
   <p><a href="{_mf_link_safe}">{html_mod.escape(_mf_link)}</a></p>
 </body></html>'''}
+
+    if query_params.get('view') == 'pd-analyze':
+        if query_params.get('key') != _PD_ANALYZE_KEY:
+            return {'statusCode': 404, 'headers': {'Content-Type': 'text/plain; charset=utf-8'}, 'body': 'Not found'}
+        try:
+            report = _pd_analyze_report()
+        except Exception as e:
+            logger.error(f"pd-analyze failed: {e}")
+            report = f"pd-analyze failed: {e}"
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'text/plain; charset=utf-8'},
+            'body': report,
+        }
 
     if query_params.get('signout') == '1':
         return {
