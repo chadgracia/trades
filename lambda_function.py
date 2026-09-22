@@ -761,6 +761,20 @@ def _render_top_nav(event, is_admin=False):
         cur_url = COGNITO_REDIRECT_URI + cur_path + (('?' + cur_qs) if cur_qs else '')
         account_html = f'<a href="{_nav_login_url(cur_url)}" class="btn nav-signin">Sign In</a>'
 
+    # Admin-only quick-switcher trigger (Cmd/Ctrl+K also opens it — see the
+    # deal-switcher script). Omitted entirely for non-admins, same as the
+    # rest of this feature.
+    deal_switcher_btn = ''
+    if is_admin:
+        deal_switcher_btn = (
+            '<button type="button" id="dealSwitcherBtn" class="nav-icon-btn" '
+            'title="Switch deal (Ctrl+K)" aria-label="Switch deal">'
+            '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">'
+            '<circle cx="6.5" cy="6.5" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4"></circle>'
+            '<line x1="9.8" y1="9.8" x2="14" y2="14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></line>'
+            '</svg></button>'
+        )
+
     return (
         '<nav class="topnav">'
         '<a href="https://www.graciagroup.com" class="nav-brand">Gracia Group</a>'
@@ -772,9 +786,170 @@ def _render_top_nav(event, is_admin=False):
         + auctions_tab
         + dashboard_tab
         + '</div>'
+        + deal_switcher_btn
         + account_html
         + '</nav>'
     )
+
+
+def _render_deal_switcher_modal():
+    """Admin-only global 'Switch Deal' quick-switcher: modal markup plus its
+    script. Only ever called (and only ever appears in the rendered page)
+    for an admin session — see the _is_admin check where this is invoked.
+    Fetches /?view=admin-deal-index once per page load and caches the
+    result in memory; all filtering after that is client-side. Reuses
+    copyTextToClipboard/COPY_ICON_SVG/CHECK_ICON_SVG, which are declared
+    earlier in the page's own <script> block."""
+    return '''
+        <div id="dealSwitcherModal" class="deal-switcher-overlay">
+            <div class="deal-switcher-box">
+                <input type="text" id="dealSwitcherInput" class="deal-switcher-input" placeholder="Search a company&hellip;" autocomplete="off" spellcheck="false">
+                <div id="dealSwitcherResults" class="deal-switcher-results"></div>
+            </div>
+        </div>
+        <script>
+        (function () {
+            var cache = null;
+            var modal = document.getElementById('dealSwitcherModal');
+            var input = document.getElementById('dealSwitcherInput');
+            var results = document.getElementById('dealSwitcherResults');
+            var btn = document.getElementById('dealSwitcherBtn');
+            var rows = [];
+            var idx = -1;
+
+            function fmtSize(v) {
+                if (v === null || v === undefined || v === '') return '';
+                var n = Number(v);
+                if (!isFinite(n)) return '';
+                if (n >= 1000000) {
+                    var m = Math.round((n / 1000000) * 10) / 10;
+                    return '$' + (m % 1 === 0 ? m.toFixed(0) : m) + 'M';
+                }
+                if (n >= 1000) return '$' + Math.round(n / 1000) + 'K';
+                return '$' + Math.round(n);
+            }
+            function fmtRange(lo, hi) {
+                var a = fmtSize(lo), b = fmtSize(hi);
+                if (a && b) return a === b ? a : (a + '\\u2013' + b);
+                return a || b || '';
+            }
+            function esc(s) {
+                return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+                    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+                });
+            }
+            function renderRows(list) {
+                rows = list;
+                idx = list.length ? 0 : -1;
+                if (!list.length) {
+                    results.innerHTML = '<div class="deal-switcher-empty">No matching deals.</div>';
+                    return;
+                }
+                results.innerHTML = list.map(function (d, i) {
+                    var label = esc(d.company) + ' &middot; ' + esc(d.side) + ' ' + esc(fmtRange(d.size_min, d.size_max)) + ' &middot; ' + esc(d.status);
+                    return '<div class="deal-switcher-row' + (i === 0 ? ' active' : '') + '" data-idx="' + i + '" data-id="' + esc(d.id) + '">' +
+                        '<span class="deal-switcher-label">' + label + '</span>' +
+                        '<button type="button" class="deal-switcher-copy" data-id="' + esc(d.id) + '" title="Copy link" aria-label="Copy link">' + COPY_ICON_SVG + '</button>' +
+                        '</div>';
+                }).join('');
+            }
+            function setActive(newIdx) {
+                var rowEls = results.querySelectorAll('.deal-switcher-row');
+                if (!rowEls.length) return;
+                idx = Math.max(0, Math.min(newIdx, rowEls.length - 1));
+                rowEls.forEach(function (el, i) {
+                    el.classList.toggle('active', i === idx);
+                });
+                rowEls[idx].scrollIntoView({block: 'nearest'});
+            }
+            function applyFilter() {
+                var q = input.value.trim().toLowerCase();
+                var list = !cache ? [] : (!q ? cache : cache.filter(function (d) {
+                    return (d.company || '').toLowerCase().indexOf(q) !== -1;
+                }));
+                renderRows(list);
+            }
+            function goToDeal(id) {
+                window.location.href = 'https://trades.graciagroup.com/deal/' + encodeURIComponent(id);
+            }
+            function openModal() {
+                modal.classList.add('show');
+                input.value = '';
+                results.innerHTML = '';
+                setTimeout(function () { input.focus(); }, 0);
+                if (cache) {
+                    renderRows(cache);
+                    return;
+                }
+                results.innerHTML = '<div class="deal-switcher-empty">Loading&hellip;</div>';
+                fetch('/?view=admin-deal-index', {credentials: 'same-origin'})
+                    .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); })
+                    .then(function (data) {
+                        cache = (data || []).slice().sort(function (a, b) {
+                            return new Date(b.updated || 0) - new Date(a.updated || 0);
+                        });
+                        renderRows(cache);
+                    })
+                    .catch(function () {
+                        results.innerHTML = '<div class="deal-switcher-empty">Failed to load deals.</div>';
+                    });
+            }
+            function closeModal() {
+                modal.classList.remove('show');
+            }
+
+            if (btn) btn.addEventListener('click', openModal);
+            document.addEventListener('keydown', function (e) {
+                if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+                    e.preventDefault();
+                    openModal();
+                    return;
+                }
+                if (!modal.classList.contains('show')) return;
+                if (e.key === 'Escape') {
+                    closeModal();
+                } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setActive(idx + 1);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setActive(idx - 1);
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (idx >= 0 && rows[idx]) goToDeal(rows[idx].id);
+                }
+            });
+            input.addEventListener('input', applyFilter);
+            modal.addEventListener('click', function (e) {
+                if (e.target === modal) closeModal();
+            });
+            results.addEventListener('click', function (e) {
+                var copyBtn = e.target.closest ? e.target.closest('.deal-switcher-copy') : null;
+                if (copyBtn) {
+                    e.stopPropagation();
+                    var id = copyBtn.getAttribute('data-id');
+                    copyTextToClipboard('https://trades.graciagroup.com/deal/' + id).then(function () {
+                        copyBtn.innerHTML = CHECK_ICON_SVG;
+                        copyBtn.title = 'Copied';
+                        clearTimeout(copyBtn._copyTimer);
+                        copyBtn._copyTimer = setTimeout(function () {
+                            copyBtn.innerHTML = COPY_ICON_SVG;
+                            copyBtn.title = 'Copy link';
+                        }, 1200);
+                    });
+                    return;
+                }
+                var row = e.target.closest ? e.target.closest('.deal-switcher-row') : null;
+                if (row) goToDeal(row.getAttribute('data-id'));
+            });
+            results.addEventListener('mousemove', function (e) {
+                var row = e.target.closest ? e.target.closest('.deal-switcher-row') : null;
+                if (!row) return;
+                setActive(parseInt(row.getAttribute('data-idx'), 10));
+            });
+        })();
+        </script>
+    '''
 
 
 def _get_http_method(event):
@@ -1391,6 +1566,34 @@ def lambda_handler(event, context):
     # already checks).
     query_params = event.get('queryStringParameters') or {}
 
+    # Admin-only global deal index for the header quick-switcher. Same
+    # admin_key gate (query param or cookie) as every other admin route in
+    # this file, but unlike those this one explicitly 403s a non-admin
+    # caller since it's consumed by fetch() rather than folded into a page
+    # render that simply omits admin-only markup.
+    _raw_path = (event.get('rawPath')
+                 or (event.get('requestContext') or {}).get('http', {}).get('path') or '')
+    if _raw_path.rstrip('/').endswith('/api/admin/deal-index') or query_params.get('view') == 'admin-deal-index':
+        _idx_is_admin = ('JK8h5Pq2L9aZ7rT3mN6bX' in
+                          (query_params.get('admin_key'), _get_cookie(event, 'admin_key')))
+        if not _idx_is_admin:
+            return _json_response(403, {'error': 'Forbidden'})
+        try:
+            _idx_deals = _load_deals_from_s3()
+        except Exception as e:
+            logger.error(f"deal-index load failed: {e}")
+            return _json_response(500, {'error': 'Failed to load deals'})
+        _idx_rows = [{
+            'id': d.get('id'),
+            'company': d.get('company'),
+            'side': 'Sell' if (d.get('type') or '').strip() == 'Sell Order' else 'Buy',
+            'size_min': _to_float(d.get('min_deal_size')),
+            'size_max': _to_float(d.get('max_deal_size')),
+            'status': d.get('stage'),
+            'updated': d.get('updated'),
+        } for d in _idx_deals]
+        return _json_response(200, _idx_rows)
+
     # TEMP DIAGNOSTIC ROUTE — remove after Explore Similar Companies is built.
     if query_params.get('industries') and query_params.get('admin_key') == 'JK8h5Pq2L9aZ7rT3mN6bX':
         _diag_deals = _load_deals_from_s3()
@@ -1649,6 +1852,7 @@ def lambda_handler(event, context):
     _is_admin = ('JK8h5Pq2L9aZ7rT3mN6bX' in
                  (query_params.get('admin_key'), _get_cookie(event, 'admin_key')))
     top_nav_html = _render_top_nav(event, _is_admin)
+    deal_switcher_html = _render_deal_switcher_modal() if _is_admin else ''
 
     # GA4 auth event. The Cognito return leg redirects to ?auth=1 (see above), so this
     # renders only on the pageview immediately following authentication, never on an
@@ -1963,6 +2167,109 @@ def lambda_handler(event, context):
             }}
             .btn.nav-signin:hover {{
                 background-color: #f0f0f0;
+            }}
+            .nav-icon-btn {{
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 34px;
+                height: 34px;
+                background-color: #fff;
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                color: var(--ink);
+                cursor: pointer;
+                padding: 0;
+            }}
+            .nav-icon-btn:hover {{
+                background-color: #f0f0f0;
+            }}
+            .deal-switcher-overlay {{
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0,0,0,0.5);
+                z-index: 2000;
+                padding-top: 12vh;
+            }}
+            .deal-switcher-overlay.show {{
+                display: block;
+            }}
+            .deal-switcher-box {{
+                background-color: #fff;
+                margin: 0 auto;
+                width: 90%;
+                max-width: 560px;
+                border-radius: 8px;
+                box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+                overflow: hidden;
+                font-family: Arial, sans-serif;
+            }}
+            .deal-switcher-input {{
+                width: 100%;
+                box-sizing: border-box;
+                border: none;
+                border-bottom: 1px solid #ddd;
+                padding: 16px 18px;
+                font-size: 16px;
+                font-family: inherit;
+                outline: none;
+            }}
+            .deal-switcher-results {{
+                max-height: 50vh;
+                overflow-y: auto;
+            }}
+            .deal-switcher-row {{
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                padding: 10px 18px;
+                cursor: pointer;
+                font-size: 14px;
+                color: #333;
+            }}
+            .deal-switcher-row.active {{
+                background-color: #f0f4f8;
+            }}
+            .deal-switcher-label {{
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }}
+            .deal-switcher-copy {{
+                flex-shrink: 0;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 26px;
+                height: 26px;
+                background: none;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                color: #666;
+                padding: 0;
+            }}
+            .deal-switcher-copy:hover {{
+                background-color: #e2e6ea;
+                color: #333;
+            }}
+            .deal-switcher-copy svg {{
+                width: 14px;
+                height: 14px;
+                fill: none;
+                stroke: currentColor;
+                stroke-width: 1.3;
+            }}
+            .deal-switcher-empty {{
+                padding: 16px 18px;
+                color: #888;
+                font-size: 14px;
             }}
             .navacct {{
                 position: relative;
@@ -2964,6 +3271,7 @@ def lambda_handler(event, context):
                 </div>
             </div>
         </div>
+        {deal_switcher_html}
     </body>
     </html>
     """
