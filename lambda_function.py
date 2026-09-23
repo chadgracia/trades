@@ -436,6 +436,14 @@ a.pd-mail{
 #pd-zoom{display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.8);align-items:center;justify-content:center;cursor:zoom-out}
 #pd-zoom.open{display:flex}
 #pd-zoom img{max-width:92vw;max-height:92vh;object-fit:contain}
+.sheet[data-role="cb"] .ff-only,.sheet[data-role="ff"] .cb-only{display:none}
+.pd-role{display:flex;flex-wrap:wrap;gap:.5rem;margin:.2rem 0 1.4rem}
+.pd-role label{cursor:pointer}
+.pd-role input{position:absolute;opacity:0;width:1px;height:1px}
+.pd-role span{display:inline-block;border:1px solid var(--hairline);border-radius:999px;padding:.45rem 1rem;background:var(--paper);font-size:.95rem}
+.pd-role label:hover span{background:var(--tint)}
+.pd-role input:checked + span{border-color:var(--ledger);background:var(--ledger-soft);color:var(--ledger);font-weight:600}
+.pd-role input:focus-visible + span{outline:3px solid var(--ink);outline-offset:2px}
 .pd-thanks{border:1px solid var(--ledger);background:var(--ledger-soft);padding:1.2rem 1.25rem;margin-top:1.2rem}
 .pd-result{margin-top:.8rem;font-weight:600;min-height:1.4em}
 .pd-result.ok{color:var(--ledger)}
@@ -458,7 +466,7 @@ footer p{margin:0 0 .55rem}
 </style>
 </head>
 <body>
-<div class="sheet">
+<div class="sheet" id="pd-sheet" data-role="cb">
 
   <div class="letterhead">
     <div class="firm">Gracia Group</div>
@@ -467,10 +475,15 @@ footer p{margin:0 0 .55rem}
 
   <h1>Reopening my desk to co-brokers: get paid on every trade, for two years, in writing.</h1>
 
+  <div class="pd-role" role="radiogroup" aria-label="Which describes you?">
+    <label><input type="radio" name="pd-role" value="cb" checked><span>Co-broker — FINRA-registered, with a CRD#</span></label>
+    <label><input type="radio" name="pd-role" value="ff"><span>Foreign finder — not U.S.-registered, based outside the U.S., introducing non-U.S. clients</span></label>
+  </div>
+
   <p class="lede">I've closed nearly $200M in secondary trades — almost none of it with co-brokers. I stopped working with brokers a few years ago. Not because the relationships weren't valuable, but because the process didn't work: constant back-and-forth as terms shifted, wasted hours and miscommunication, and more than once discovering — after all that — that I was already in touch with the referred client. Delays and misinformation made closing deals almost impossible. This is me opening that door again, in a way built to solve those problems.</p>
 
   <p>And one thing up front, because it matters in our business: the term defines when I owe you money, not when I stop respecting where a relationship came from.</p>
-  <p>This is open to co-brokers and to foreign finders, and the payments are the same for both. The one difference is how involved you stay. U.S. rules let a finder make the introduction, and nothing more. So if you're a foreign finder, your part ends once you've introduced your client: from there, I handle the relationship and the trades, and your fee is paid on the same schedule as a co-broker's.</p>
+  <p class="ff-only">A note on how this works for finders: U.S. rules let a foreign finder make the introduction, and nothing more. Your client must also be based outside the U.S. — a non-U.S. individual or an entity domiciled abroad. Once you've introduced them, I handle the relationship and the trades, and you're paid on the same schedule as a co-broker.</p>
 
   <h2>The problem as I see it</h2>
 
@@ -478,7 +491,9 @@ footer p{margin:0 0 .55rem}
 
   <h2>The dashboard</h2>
 
-  <p>Everything in this program runs on my platform, and co-brokers get a dashboard for their registered clients: where each one stands, from onboarding paperwork (IQF) through every live trade — matched, introduced, LOI, transfer notice, SPA, wired. You're not asking me what happened; you're looking at it.</p>
+  <p class="ff-only">Finders receive a statement of fees earned on each client they introduce.</p>
+
+  <p class="cb-only">Everything in this program runs on my platform, and co-brokers get a dashboard for their registered clients: where each one stands, from onboarding paperwork (IQF) through every live trade — matched, introduced, LOI, transfer notice, SPA, wired. You're not asking me what happened; you're looking at it.</p>
 
   <h2>The two tracks</h2>
 
@@ -496,13 +511,13 @@ footer p{margin:0 0 .55rem}
     <tbody>
       <tr>
         <td>In one line</td>
-        <td class="pick">We work together to close multiple deals with your client, and you're paid on all of them for two years.</td>
-        <td>Your client sees only the trade under discussion, and I don't reach out to them otherwise during the tail.</td>
+        <td class="pick"><span class="cb-only">We work together to close multiple deals with your client, and you're paid on all of them for two years.</span><span class="ff-only">You introduce your client once, and you're paid on their trades for two years.</span></td>
+        <td><span class="cb-only">Your client sees only the trade under discussion, and I don't reach out to them otherwise during the tail.</span><span class="ff-only">You introduce your client for one trade, and you're paid on that trade.</span></td>
       </tr>
       <tr>
         <td>What your client sees</td>
         <td class="pick">My pages. Your client gets access to <a href="https://trades.graciagroup.com/" target="_blank" rel="noopener">my full trades page</a>: live indications, deal pages, auctions, and trade updates.__PD_IMG_PARTNER__</td>
-        <td>My page for that one trade: a link only to its deal detail page, with no navigation or other buttons on top. You run the relationship.__PD_IMG_REFERRAL__</td>
+        <td>My page for that one trade: a link only to its deal detail page, with no navigation or other buttons on top.<span class="cb-only"> You run the relationship.</span>__PD_IMG_REFERRAL__</td>
       </tr>
       <tr>
         <td>First trade</td>
@@ -519,19 +534,23 @@ footer p{margin:0 0 .55rem}
         <td class="pick"><span class="num">24 months</span> from the introduction, hard end</td>
         <td><span class="num">12 months</span> from the introduction, hard end</td>
       </tr>
+      <tr class="ff-only">
+        <td>Eligible clients</td>
+        <td colspan="2">Non-U.S. individuals and entities domiciled outside the U.S. Your client receives a written description of your fee and signs an acknowledgment, and their trade confirmation notes that a finder's fee is paid under our agreement.</td>
+      </tr>
       <tr>
         <td>What counts</td>
         <td class="pick">Any trade initiated before the term ends — transfer notice, LOI, purchase agreement, or confirmed order — pays out even if it closes after.</td>
         <td>Same, for the introduced trade.</td>
       </tr>
-      <tr>
-        <td>Co-brokers are kept in</td>
+      <tr class="cb-only">
+        <td>You're kept in</td>
         <td class="pick">CC on all correspondence through the first two trades; after that, email updates on every new deal and status change — and the dashboard, always.</td>
         <td>CC on the trade, start to finish.</td>
       </tr>
-      <tr>
-        <td>Foreign finders</td>
-        <td colspan="2">Same payments on either track. By law, your role ends at the introduction — you won't be copied on correspondence or involved in the trades that follow, and you'll receive a statement of each fee as it's earned.</td>
+      <tr class="ff-only">
+        <td>Your role</td>
+        <td colspan="2">Your role ends at the introduction. You won't be copied on correspondence or involved in the trades that follow; you'll receive a statement of each fee as it's earned.</td>
       </tr>
     </tbody>
   </table>
@@ -543,8 +562,9 @@ footer p{margin:0 0 .55rem}
 
   <ul class="plain">
     <li><strong>Trades happen on my rails.</strong> Indications, introductions, orders, and closings all run through my platform, so there's no trade that can quietly happen off the books.</li>
-    <li><strong>You see the record.</strong> For each client you register: the introduction date, the term clock, and every trade — with your fee accrued against it. Foreign finders receive a statement of fees earned instead.</li>
-    <li><strong>You're paid when I'm paid.</strong> Your share is due concurrently with my commission, wired under the fee-sharing agreement.</li>
+    <li class="cb-only"><strong>You see the record.</strong> For each client you register: the introduction date, the term clock, and every trade — with your fee accrued against it.</li>
+    <li class="ff-only"><strong>You see what you're owed.</strong> A statement of each fee as it's earned on the clients you introduced.</li>
+    <li><strong>You're paid when I'm paid.</strong> Your share is due concurrently with my commission, wired under the <span class="cb-only">fee-sharing agreement</span><span class="ff-only">finder agreement</span>.</li>
     <li><strong>It's Rainmaker paper.</strong> Rainmaker Securities' standard fee-sharing agreement for co-brokers, or its finder agreement for foreign finders — the same contracts they use for every co-broke — not a side letter with me.</li>
   </ul>
 
@@ -552,10 +572,10 @@ footer p{margin:0 0 .55rem}
 
   <ol class="steps">
     <li><strong>Check the name.</strong> The availability check runs entirely in your browser — before you've signed or told me anything. Details at the bottom of this page.</li>
-    <li><strong>Sign once.</strong> The master fee-sharing agreement — Rainmaker's form, countersigned by their president, naming no clients. This happens one time, ever.</li>
+    <li><span class="cb-only"><strong>Sign once.</strong> The master fee-sharing agreement — Rainmaker's form, countersigned by their president, naming no clients. This happens one time, ever.</span><span class="ff-only"><strong>Sign once.</strong> Rainmaker's finder agreement, confirming you're not required to register in the U.S. and that the arrangement is lawful where you are. This happens one time, ever.</span></li>
     <li><strong>Register the client.</strong> A one-page schedule names your client, your track, and the dates. Signed electronically in minutes.</li>
-    <li><strong>Make the introduction.</strong> A three-way email connects me, you, and your client, and states on its face that it's made under our agreement. When your client responds, the clock starts. For foreign finders, this is where your part ends.</li>
-    <li><strong>Get paid.</strong> Your client trades; your share wires when my commission does. You see every entry.</li>
+    <li><span class="cb-only"><strong>Make the introduction.</strong> A three-way email connects me, you, and your client, and states on its face that it's made under our agreement. When your client responds, the clock starts.</span><span class="ff-only"><strong>Make the introduction.</strong> A three-way email connects me, you, and your client. Your client receives the fee disclosure to acknowledge. This is where your part ends.</span></li>
+    <li><span class="cb-only"><strong>Get paid.</strong> Your client trades; your share wires when my commission does. You see every entry.</span><span class="ff-only"><strong>Get paid.</strong> Your client trades; your fee wires when my commission does, and you receive a statement.</span></li>
   </ol>
 
   <h2>Who this is for</h2>
@@ -582,6 +602,21 @@ __PD_FORM__
 </div>
 <div id="pd-zoom"><img alt=""></div>
 <script>
+(function(){
+  var sheet = document.getElementById('pd-sheet');
+  var roleField = document.getElementById('pd-role-field');
+  var country = document.getElementById('pd-country');
+  var radios = document.querySelectorAll('input[name=pd-role]');
+  function setRole(r){
+    r = (r === 'ff') ? 'ff' : 'cb';
+    sheet.setAttribute('data-role', r);
+    radios.forEach(function(x){ x.checked = (x.value === r); });
+    if (roleField) roleField.value = r;
+    if (country) country.required = (r === 'ff');
+  }
+  radios.forEach(function(x){ x.addEventListener('change', function(){ if (x.checked) setRole(x.value); }); });
+  setRole(new URLSearchParams(location.search).get('role'));
+})();
 (function(){
   var zoom = document.getElementById('pd-zoom');
   var zimg = zoom.querySelector('img');
@@ -684,6 +719,7 @@ PD_OPTIONS = ('Partner track', 'Referral track', 'Neither')
 
 PARTNER_DESK_FORM = """  <form class="pd-form" method="post" action="?view=partner-desk">
   <input type="hidden" name="action" value="reply">
+  <input type="hidden" name="role" id="pd-role-field" value="cb">
   <div class="choices">
     <label class="choice"><input type="radio" name="option" value="Partner track" required><strong>Partner track</strong> — 50% of my fee on your client's first two trades, then 33% of every trade they do for the rest of the two years, on any name in my book.</label>
     <label class="choice"><input type="radio" name="option" value="Referral track"><strong>Referral track</strong> — 50% of my fee on the trade you introduce; your client sees only that trade, and I don't reach out to them during the 12-month tail.</label>
@@ -695,6 +731,14 @@ PARTNER_DESK_FORM = """  <form class="pd-form" method="post" action="?view=partn
   <input type="email" id="pd-email" name="email" required autocomplete="email" value="__PD_EMAIL__">
   <label class="f" for="pd-firm">Firm</label>
   <input type="text" id="pd-firm" name="firm" required autocomplete="organization">
+  <div class="cb-only">
+  <label class="f" for="pd-crd">CRD# (optional)</label>
+  <input type="text" id="pd-crd" name="crd" inputmode="numeric">
+  </div>
+  <div class="ff-only">
+  <label class="f" for="pd-country">Country</label>
+  <input type="text" id="pd-country" name="country" autocomplete="country-name">
+  </div>
   <label class="f" for="pd-comment">Comment (optional)</label>
   <textarea id="pd-comment" name="comment"></textarea>
   <button class="pd-btn" type="submit">Send my answer</button>
@@ -724,6 +768,9 @@ def _pd_handle_reply(event):
         'firm': form.get('firm', ''),
         'option': form.get('option', ''),
         'comment': form.get('comment', ''),
+        'role': 'ff' if form.get('role') == 'ff' else 'cb',
+        'crd': form.get('crd', ''),
+        'country': form.get('country', ''),
         'b': (event.get('queryStringParameters') or {}).get('b', ''),
         'ip': http.get('sourceIp') or (event.get('requestContext') or {}).get('identity', {}).get('sourceIp', ''),
         'user_agent': http.get('userAgent') or headers.get('user-agent') or headers.get('User-Agent') or '',
@@ -744,10 +791,10 @@ def _pd_handle_reply(event):
         logger.error(f"partner-desk reply S3 write failed: {e}")
     try:
         text = '\n'.join(f"{k}: {reply[k]}" for k in
-                         ('name', 'email', 'firm', 'option', 'comment', 'b', 'ts', 'ip', 'user_agent'))
+                         ('name', 'email', 'firm', 'role', 'crd', 'country', 'option', 'comment', 'b', 'ts', 'ip', 'user_agent'))
         msg = {'Source': PD_REPLY_FROM,
                'Destination': {'ToAddresses': [PD_REPLY_TO]},
-               'Message': {'Subject': {'Data': f"Partner Desk reply: {reply['name'] or '(no name)'} — {reply['option'] or '(no option)'}"},
+               'Message': {'Subject': {'Data': f"Partner Desk reply: {reply['name'] or '(no name)'} — {reply['option'] or '(no option)'} ({'Foreign finder' if reply['role'] == 'ff' else 'Co-broker'})"},
                            'Body': {'Text': {'Data': text}}}}
         if '@' in reply['email']:
             msg['ReplyToAddresses'] = [reply['email']]
