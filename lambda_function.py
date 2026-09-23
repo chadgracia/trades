@@ -536,7 +536,7 @@ footer p{margin:0 0 .55rem}
     <li><strong>Trades happen on my rails.</strong> Indications, introductions, orders, and closings all run through my platform, so there's no trade that can quietly happen off the books.</li>
     <li><strong>You see the record.</strong> For each client you register: the introduction date, the term clock, and every trade — with your fee accrued against it.</li>
     <li><strong>You're paid when I'm paid.</strong> Your share is due concurrently with my commission, wired under the fee-sharing agreement.</li>
-    <li><strong>It's Rainmaker paper.</strong> Rainmaker Securities' standard broker-dealer fee-sharing agreement — the same FINRA-arbitrable contract they use for every co-broke — not a side letter with me.</li>
+    <li><strong>It's Rainmaker paper.</strong> Rainmaker Securities' standard fee-sharing agreement for co-brokers, or its finder agreement for foreign finders — the same contracts they use for every co-broke — not a side letter with me.</li>
   </ul>
 
   <h2>How it works</h2>
@@ -551,7 +551,7 @@ footer p{margin:0 0 .55rem}
 
   <h2>Who this is for</h2>
 
-  <p>Registered representatives and FINRA-member broker-dealers I've invited. If you're outside the U.S. and unregistered, there's a compliant finder path — the terms differ and U.S.-person clients face restrictions, so ask me and we'll walk through it.</p>
+  <p>Co-brokers and foreign finders I've invited. Registered representatives and FINRA-member broker-dealers sign a fee-sharing agreement; finders outside the U.S. sign a finder agreement with slightly different terms, to comply with U.S. regulations. The payments are the same either way.</p>
 
   <h2>Which of these would you consider?</h2>
 
