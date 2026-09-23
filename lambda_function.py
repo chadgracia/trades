@@ -470,6 +470,7 @@ footer p{margin:0 0 .55rem}
   <p class="lede">I've closed nearly $200M in secondary trades — almost none of it with co-brokers. I stopped working with brokers a few years ago. Not because the relationships weren't valuable, but because the process didn't work: constant back-and-forth as terms shifted, wasted hours and miscommunication, and more than once discovering — after all that — that I was already in touch with the referred client. Delays and misinformation made closing deals almost impossible. This is me opening that door again, in a way built to solve those problems.</p>
 
   <p>And one thing up front, because it matters in our business: the term defines when I owe you money, not when I stop respecting where a relationship came from.</p>
+  <p>This is open to co-brokers and to foreign finders, and the payments are the same for both. The one difference is how involved you stay. U.S. rules let a finder make the introduction, and nothing more. So if you're a foreign finder, your part ends once you've introduced your client: from there, I handle the relationship and the trades, and your fee is paid on the same schedule as a co-broker's.</p>
 
   <h2>The problem as I see it</h2>
 
@@ -477,7 +478,7 @@ footer p{margin:0 0 .55rem}
 
   <h2>The dashboard</h2>
 
-  <p>Everything in this program runs on my platform, and you get a dashboard for your registered clients: where each one stands, from onboarding paperwork (IQF) through every live trade — matched, introduced, LOI, transfer notice, SPA, wired. You're not asking me what happened; you're looking at it.</p>
+  <p>Everything in this program runs on my platform, and co-brokers get a dashboard for their registered clients: where each one stands, from onboarding paperwork (IQF) through every live trade — matched, introduced, LOI, transfer notice, SPA, wired. You're not asking me what happened; you're looking at it.</p>
 
   <h2>The two tracks</h2>
 
@@ -524,9 +525,13 @@ footer p{margin:0 0 .55rem}
         <td>Same, for the introduced trade.</td>
       </tr>
       <tr>
-        <td>You're kept in</td>
+        <td>Co-brokers are kept in</td>
         <td class="pick">CC on all correspondence through the first two trades; after that, email updates on every new deal and status change — and the dashboard, always.</td>
         <td>CC on the trade, start to finish.</td>
+      </tr>
+      <tr>
+        <td>Foreign finders</td>
+        <td colspan="2">Same payments on either track. By law, your role ends at the introduction — you won't be copied on correspondence or involved in the trades that follow, and you'll receive a statement of each fee as it's earned.</td>
       </tr>
     </tbody>
   </table>
@@ -538,7 +543,7 @@ footer p{margin:0 0 .55rem}
 
   <ul class="plain">
     <li><strong>Trades happen on my rails.</strong> Indications, introductions, orders, and closings all run through my platform, so there's no trade that can quietly happen off the books.</li>
-    <li><strong>You see the record.</strong> For each client you register: the introduction date, the term clock, and every trade — with your fee accrued against it.</li>
+    <li><strong>You see the record.</strong> For each client you register: the introduction date, the term clock, and every trade — with your fee accrued against it. Foreign finders receive a statement of fees earned instead.</li>
     <li><strong>You're paid when I'm paid.</strong> Your share is due concurrently with my commission, wired under the fee-sharing agreement.</li>
     <li><strong>It's Rainmaker paper.</strong> Rainmaker Securities' standard fee-sharing agreement for co-brokers, or its finder agreement for foreign finders — the same contracts they use for every co-broke — not a side letter with me.</li>
   </ul>
@@ -549,13 +554,13 @@ footer p{margin:0 0 .55rem}
     <li><strong>Check the name.</strong> The availability check runs entirely in your browser — before you've signed or told me anything. Details at the bottom of this page.</li>
     <li><strong>Sign once.</strong> The master fee-sharing agreement — Rainmaker's form, countersigned by their president, naming no clients. This happens one time, ever.</li>
     <li><strong>Register the client.</strong> A one-page schedule names your client, your track, and the dates. Signed electronically in minutes.</li>
-    <li><strong>Make the introduction.</strong> A three-way email connects me, you, and your client, and states on its face that it's made under our agreement. When your client responds, the clock starts.</li>
+    <li><strong>Make the introduction.</strong> A three-way email connects me, you, and your client, and states on its face that it's made under our agreement. When your client responds, the clock starts. For foreign finders, this is where your part ends.</li>
     <li><strong>Get paid.</strong> Your client trades; your share wires when my commission does. You see every entry.</li>
   </ol>
 
   <h2>Who this is for</h2>
 
-  <p>Co-brokers and foreign finders I've invited. Registered representatives and FINRA-member broker-dealers sign a fee-sharing agreement; finders outside the U.S. sign a finder agreement with slightly different terms, to comply with U.S. regulations. The payments are the same either way.</p>
+  <p>Co-brokers and foreign finders I've invited. Registered representatives and FINRA-member broker-dealers sign a fee-sharing agreement; finders outside the U.S. sign a finder agreement with slightly different terms, to comply with U.S. regulations. The payments are the same either way; the difference is that a finder's role ends at the introduction.</p>
 
   <div class="checkbox-panel">
     <h2 style="margin-top:0;padding-top:0;border-top:none">Name check — nothing leaves your browser</h2>
