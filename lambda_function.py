@@ -473,7 +473,8 @@ footer p{margin:0 0 .55rem}
     <div class="via">Chad Gracia · Registered Representative, Rainmaker Securities, LLC</div>
   </div>
 
-  <h1>Reopening my desk to co-brokers: get paid on every trade, for two years, in writing.</h1>
+  <h1 class="cb-only">Reopening my desk to co-brokers: get paid on every trade, for two years, in writing.</h1>
+  <h1 class="ff-only">Opening my desk to foreign finders: get paid on every trade your clients make, for two years, in writing.</h1>
 
   <div class="pd-role" role="radiogroup" aria-label="Which describes you?">
     <label><input type="radio" name="pd-role" value="cb" checked><span>Co-broker — FINRA-registered, with a CRD#</span></label>
@@ -489,7 +490,8 @@ footer p{margin:0 0 .55rem}
 
   <p>You have buyers and sellers who want names I trade, and I rarely bring co-brokers my best inventory because my own book is deep enough to close it. When brokers do work together, the standard process burns time and breeds miscommunication — both of which kill deals — and once a tail expires, introductions in either direction pay nobody. I know I've lost clients to other brokers exactly this way, and never saw a follow-up payment. The traditional arrangement seems designed to minimize closed trades.</p>
 
-  <h2>The dashboard</h2>
+  <h2 class="cb-only">The dashboard</h2>
+  <h2 class="ff-only">Your fee statement</h2>
 
   <p class="ff-only">Finders receive a statement of fees earned on each client they introduce.</p>
 
