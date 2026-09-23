@@ -424,6 +424,15 @@ a.pd-mail{
   border:1px solid var(--hairline);width:100%;max-width:340px;
   background:var(--paper);color:var(--ink);
 }
+.pd-form label.f{display:block;margin:.8rem 0 .25rem;font-weight:600}
+.pd-form input[type=text],.pd-form input[type=email],.pd-form textarea{
+  font-family:inherit;font-size:1rem;padding:.55rem .7rem;
+  border:1px solid var(--hairline);width:100%;max-width:420px;
+  background:var(--paper);color:var(--ink);box-sizing:border-box;
+}
+.pd-form textarea{min-height:5rem;max-width:100%}
+.pd-form .pd-btn{margin-top:1rem}
+.pd-thanks{border:1px solid var(--ledger);background:var(--ledger-soft);padding:1.2rem 1.25rem;margin-top:1.2rem}
 .pd-result{margin-top:.8rem;font-weight:600;min-height:1.4em}
 .pd-result.ok{color:var(--ledger)}
 .pd-result.taken{color:#7A2E1D}
@@ -546,31 +555,7 @@ footer p{margin:0 0 .55rem}
 
   <h2>Which of these would you consider?</h2>
 
-  <div class="choices">
-    <label class="choice"><input type="radio" name="pdtrack" value="Partner track"><strong>Partner track</strong> — 50% of my fee on your client's first two trades, then 33% of every trade they do for the rest of the two years, on any name in my book.</label>
-    <label class="choice"><input type="radio" name="pdtrack" value="Referral track"><strong>Referral track</strong> — 50% of my fee on the trade you introduce; your client sees only that trade, and I don't reach out to them during the 12-month tail.</label>
-    <label class="choice"><input type="radio" name="pdtrack" value="Neither"><strong>Neither</strong> — understood; these two tracks are the only way I work with co-brokers now.</label>
-  </div>
-
-  <button class="pd-btn" id="pd-submit" disabled>Continue</button>
-
-  <div class="reveal" id="pd-neither">
-    <p>Fair enough — no hard feelings, and nothing else changes between us. If you ever want to revisit it, this page isn't going anywhere.</p>
-    <a class="pd-mail" href="mailto:cgracia@rainmakersecurities.com?subject=Co-broker%20program%20-%20not%20for%20me">Tell me anyway</a>
-  </div>
-
-  <div class="reveal" id="pd-yes">
-    <p id="pd-yes-line"></p>
-    <a class="pd-mail" id="pd-mail-link" href="mailto:cgracia@rainmakersecurities.com">Email me your answer</a>
-
-    <div class="checkbox-panel">
-      <h2 style="margin-top:0;padding-top:0;border-top:none">Name check — nothing leaves your browser</h2>
-      <p class="small">Type a client's email address. The check runs locally in this page against an encrypted copy of my list — open your browser's developer tools (Network tab) and verify for yourself: nothing is transmitted, nothing is recorded. If the email is already in my book, you'll see it here, I never know you looked, and the conversation stops there. If the person is new to me but I have existing relationships at their firm, you'll see that too, and we agree the scope before you register. Otherwise: available, yours to register.</p>
-      <input type="email" id="pd-email" placeholder="client@example.com" autocomplete="off">
-      <button class="pd-btn" id="pd-check" style="margin-left:.4rem">Check</button>
-      <div class="pd-result" id="pd-result"></div>
-    </div>
-  </div>
+__PD_FORM__
 
   <footer>
     <p>This page is a summary for discussion with professional intermediaries and is not an offer to buy or sell securities, investment advice, or a solicitation directed at investors. All terms are subject to Rainmaker Securities, LLC review and to an executed fee-sharing or finder agreement, which governs in full. Fee sharing is available only where permitted by applicable law and FINRA rules, including registration requirements. Securities transactions are conducted through Rainmaker Securities, LLC, member FINRA/SIPC.</p>
@@ -579,74 +564,96 @@ footer p{margin:0 0 .55rem}
 
 </div>
 <script>
-(function(){
-  var EMAILS = new Set(__EMAIL_HASHES__);
-  var DOMAINS = new Set(__DOMAIN_HASHES__);
-  var SALT = 'gracia-partner-check-v1';
-  var selected = '';
-  var radios = document.querySelectorAll('input[name=pdtrack]');
-  var submitBtn = document.getElementById('pd-submit');
-  radios.forEach(function(r){
-    r.addEventListener('change', function(){
-      selected = r.value;
-      submitBtn.disabled = false;
-      document.querySelectorAll('.choice').forEach(function(c){c.classList.remove('selected');});
-      r.closest('.choice').classList.add('selected');
-    });
+document.querySelectorAll('input[name=option]').forEach(function(r){
+  r.addEventListener('change', function(){
+    document.querySelectorAll('.choice').forEach(function(c){c.classList.remove('selected');});
+    r.closest('.choice').classList.add('selected');
   });
-  submitBtn.addEventListener('click', function(){
-    var neither = document.getElementById('pd-neither');
-    var yes = document.getElementById('pd-yes');
-    neither.classList.remove('open');
-    yes.classList.remove('open');
-    if (selected === 'Neither') {
-      neither.classList.add('open');
-      neither.scrollIntoView({behavior:'smooth', block:'nearest'});
-    } else if (selected) {
-      document.getElementById('pd-yes-line').textContent =
-        'Good — the ' + selected + ' it is. Two ways to move: email me your answer so we can start the paperwork, or test a name first below.';
-      document.getElementById('pd-mail-link').href =
-        'mailto:cgracia@rainmakersecurities.com?subject=' + encodeURIComponent('Co-broker program: ' + selected);
-      yes.classList.add('open');
-      yes.scrollIntoView({behavior:'smooth', block:'nearest'});
-    }
-  });
-  async function pdHash(s){
-    var data = new TextEncoder().encode(SALT + s);
-    var buf = await crypto.subtle.digest('SHA-256', data);
-    return Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,'0');}).join('').slice(0,16);
-  }
-  async function runCheck(){
-    var input = document.getElementById('pd-email');
-    var out = document.getElementById('pd-result');
-    var val = (input.value || '').trim();
-    out.className = 'pd-result';
-    if (!val || val.indexOf('@') < 0) { out.textContent = 'Enter a full email address.'; return; }
-    if (EMAILS.size === 0) { out.textContent = 'The check is temporarily offline — email me the name instead.'; return; }
-    if (!window.crypto || !crypto.subtle) { out.textContent = 'Your browser does not support the local check — email me the name instead.'; return; }
-    var norm = val.trim().toLowerCase();
-    var h = await pdHash(norm);
-    if (EMAILS.has(h)) {
-      out.textContent = 'Already in my book — the conversation stops there. I never know you looked.';
-      out.className = 'pd-result taken';
-    } else {
-      var dh = await pdHash('d:' + norm.split('@')[1]);
-      if (DOMAINS.has(dh)) {
-        out.textContent = 'This person is new to me, but I have existing relationships at their firm. Email me before registering and we agree the scope up front.';
-        out.className = 'pd-result firm';
-      } else {
-        out.textContent = 'Available — this one is yours to register. And like every check, the name never left your browser: I cannot see it, now or ever.';
-        out.className = 'pd-result ok';
-      }
-    }
-  }
-  document.getElementById('pd-check').addEventListener('click', runCheck);
-  document.getElementById('pd-email').addEventListener('keydown', function(e){ if (e.key === 'Enter') runCheck(); });
-})();
+});
 </script>
 </body>
 </html>
 """
+
+PD_CHECKER_ENABLED = False  # True re-enables the Pipeline-backed name check (_partner_desk_hash_sets)
+PD_REPLIES_KEY = 'partner-desk-replies.json'
+PD_REPLY_TO = 'cgracia@rainmakersecurities.com'
+PD_REPLY_FROM = 'agent@agent.graciagroup.com'
+PD_OPTIONS = ('Partner track', 'Referral track', 'Neither')
+
+PARTNER_DESK_FORM = """  <form class="pd-form" method="post" action="?view=partner-desk">
+  <input type="hidden" name="action" value="reply">
+  <div class="choices">
+    <label class="choice"><input type="radio" name="option" value="Partner track" required><strong>Partner track</strong> — 50% of my fee on your client's first two trades, then 33% of every trade they do for the rest of the two years, on any name in my book.</label>
+    <label class="choice"><input type="radio" name="option" value="Referral track"><strong>Referral track</strong> — 50% of my fee on the trade you introduce; your client sees only that trade, and I don't reach out to them during the 12-month tail.</label>
+    <label class="choice"><input type="radio" name="option" value="Neither"><strong>Neither</strong> — understood; these two tracks are the only way I work with co-brokers now.</label>
+  </div>
+  <label class="f" for="pd-name">Name</label>
+  <input type="text" id="pd-name" name="name" required autocomplete="name">
+  <label class="f" for="pd-email">Email</label>
+  <input type="email" id="pd-email" name="email" required autocomplete="email" value="__PD_EMAIL__">
+  <label class="f" for="pd-firm">Firm</label>
+  <input type="text" id="pd-firm" name="firm" required autocomplete="organization">
+  <label class="f" for="pd-comment">Comment (optional)</label>
+  <textarea id="pd-comment" name="comment"></textarea>
+  <button class="pd-btn" type="submit">Send my answer</button>
+  </form>"""
+
+PARTNER_DESK_THANKS = """  <div class="pd-thanks"><p style="margin:0">Thank you — I've got your answer and will be in touch.</p></div>"""
+
+
+def _pd_handle_reply(event):
+    """Record a partner-desk form POST: append to S3, email via SES. Any
+    failure is logged; the caller shows the thank-you regardless."""
+    body = event.get('body') or ''
+    if event.get('isBase64Encoded'):
+        try:
+            body = base64.b64decode(body).decode('utf-8')
+        except Exception as e:
+            logger.error(f"partner-desk reply body decode failed: {e}")
+            body = ''
+    form = {k: (v[0] if v else '').strip()[:4000]
+            for k, v in urllib.parse.parse_qs(body, keep_blank_values=True).items()}
+    http = (event.get('requestContext') or {}).get('http') or {}
+    headers = event.get('headers') or {}
+    reply = {
+        'ts': datetime.now(timezone.utc).isoformat(),
+        'name': form.get('name', ''),
+        'email': form.get('email', ''),
+        'firm': form.get('firm', ''),
+        'option': form.get('option', ''),
+        'comment': form.get('comment', ''),
+        'b': (event.get('queryStringParameters') or {}).get('b', ''),
+        'ip': http.get('sourceIp') or (event.get('requestContext') or {}).get('identity', {}).get('sourceIp', ''),
+        'user_agent': http.get('userAgent') or headers.get('user-agent') or headers.get('User-Agent') or '',
+    }
+    logger.info(f"partner-desk reply: {json.dumps(reply)}")
+    try:
+        s3 = boto3.client('s3')
+        try:
+            obj = s3.get_object(Bucket=AUCTIONS_BUCKET, Key=PD_REPLIES_KEY)
+            replies = json.loads(obj['Body'].read().decode('utf-8'))
+        except s3.exceptions.NoSuchKey:
+            replies = []
+        replies.append(reply)
+        s3.put_object(Bucket=AUCTIONS_BUCKET, Key=PD_REPLIES_KEY,
+                      Body=json.dumps(replies, indent=2).encode('utf-8'),
+                      ContentType='application/json')
+    except Exception as e:
+        logger.error(f"partner-desk reply S3 write failed: {e}")
+    try:
+        text = '\n'.join(f"{k}: {reply[k]}" for k in
+                         ('name', 'email', 'firm', 'option', 'comment', 'b', 'ts', 'ip', 'user_agent'))
+        msg = {'Source': PD_REPLY_FROM,
+               'Destination': {'ToAddresses': [PD_REPLY_TO]},
+               'Message': {'Subject': {'Data': f"Partner Desk reply: {reply['name'] or '(no name)'} — {reply['option'] or '(no option)'}"},
+                           'Body': {'Text': {'Data': text}}}}
+        if '@' in reply['email']:
+            msg['ReplyToAddresses'] = [reply['email']]
+        boto3.client('ses', region_name='us-east-1').send_email(**msg)
+    except Exception as e:
+        logger.error(f"partner-desk reply SES send failed: {e}")
+
 
 
 def _live_auctions_for_nav():
@@ -1540,6 +1547,14 @@ def lambda_handler(event, context):
 
     # Dispatch POST requests to the natural-language search handler.
     http_method = _get_http_method(event)
+    if (http_method == 'POST'
+            and (event.get('queryStringParameters') or {}).get('view') == 'partner-desk'):
+        _pd_handle_reply(event)
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'text/html; charset=utf-8'},
+            'body': PARTNER_DESK_HTML.replace('__PD_FORM__', PARTNER_DESK_THANKS),
+        }
     if http_method == 'POST':
         # Raw invoke payload: if the event IS the search body (has a
         # top-level 'query' and no HTTP 'body' field), wrap it into a
@@ -1623,11 +1638,13 @@ def lambda_handler(event, context):
                 'body': f'<p style="font-family:sans-serif;padding:40px">Logged in as {_mint_email}.<br><br><a href="{_mint_link}">Open web-bid test link (Positron)</a></p>'}
 
     if query_params.get('view') == 'partner-desk':
-        _pd_sets = _partner_desk_hash_sets()
+        if PD_CHECKER_ENABLED:
+            _partner_desk_hash_sets()
+        _pd_email = html_mod.escape((query_params.get('b') or '').strip(), quote=True)
         return {
             'statusCode': 200,
             'headers': {'Content-Type': 'text/html; charset=utf-8'},
-            'body': PARTNER_DESK_HTML.replace('__EMAIL_HASHES__', _pd_sets['emails']).replace('__DOMAIN_HASHES__', _pd_sets['domains']),
+            'body': PARTNER_DESK_HTML.replace('__PD_FORM__', PARTNER_DESK_FORM.replace('__PD_EMAIL__', _pd_email)),
         }
 
     # Admin: mint a Syndicate Dashboard magic link for any email, no login
