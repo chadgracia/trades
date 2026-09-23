@@ -553,6 +553,14 @@ footer p{margin:0 0 .55rem}
 
   <p>Co-brokers and foreign finders I've invited. Registered representatives and FINRA-member broker-dealers sign a fee-sharing agreement; finders outside the U.S. sign a finder agreement with slightly different terms, to comply with U.S. regulations. The payments are the same either way.</p>
 
+  <div class="checkbox-panel">
+    <h2 style="margin-top:0;padding-top:0;border-top:none">Name check — nothing leaves your browser</h2>
+    <p class="small">Type a client's email address. The check runs locally in this page against an encrypted copy of my list — open your browser's developer tools (Network tab) and verify for yourself: nothing is transmitted, nothing is recorded. If the email is already in my book, you'll see it here, I never know you looked, and the conversation stops there. If the person is new to me but I have existing relationships at their firm, you'll see that too, and we agree the scope before you register. Otherwise: available, yours to register.</p>
+    <input type="email" id="pd-check-email" placeholder="client@example.com" autocomplete="off">
+    <button class="pd-btn" id="pd-check-btn" style="margin-left:.4rem" disabled>Loading…</button>
+    <div class="pd-result" id="pd-check-result"></div>
+  </div>
+
   <h2>Which of these would you consider?</h2>
 
 __PD_FORM__
@@ -570,12 +578,64 @@ document.querySelectorAll('input[name=option]').forEach(function(r){
     r.closest('.choice').classList.add('selected');
   });
 });
+(function(){
+  var EMAILS = new Set();
+  var DOMAINS = new Set();
+  var SALT = 'gracia-partner-check-v1';
+  var btn = document.getElementById('pd-check-btn');
+  var out = document.getElementById('pd-check-result');
+  var OFFLINE = 'The check is temporarily offline — email me the name instead.';
+  fetch('?view=partner-desk&hashes=1').then(function(r){
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(d){
+    (d.emails || []).forEach(function(h){ EMAILS.add(h); });
+    (d.domains || []).forEach(function(h){ DOMAINS.add(h); });
+    if (EMAILS.size === 0) throw new Error('empty');
+    btn.textContent = 'Check';
+    btn.disabled = false;
+  }).catch(function(){
+    btn.textContent = 'Check';
+    out.className = 'pd-result';
+    out.textContent = OFFLINE;
+  });
+  async function pdHash(s){
+    var data = new TextEncoder().encode(SALT + s);
+    var buf = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,'0');}).join('').slice(0,16);
+  }
+  async function runCheck(){
+    var input = document.getElementById('pd-check-email');
+    var val = (input.value || '').trim();
+    out.className = 'pd-result';
+    if (!val || val.indexOf('@') < 0) { out.textContent = 'Enter a full email address.'; return; }
+    if (EMAILS.size === 0) { out.textContent = OFFLINE; return; }
+    if (!window.crypto || !crypto.subtle) { out.textContent = 'Your browser does not support the local check — email me the name instead.'; return; }
+    var norm = val.trim().toLowerCase();
+    var h = await pdHash(norm);
+    if (EMAILS.has(h)) {
+      out.textContent = 'Already in my book — the conversation stops there. I never know you looked.';
+      out.className = 'pd-result taken';
+    } else {
+      var dh = await pdHash('d:' + norm.split('@')[1]);
+      if (DOMAINS.has(dh)) {
+        out.textContent = 'This person is new to me, but I have existing relationships at their firm. Email me before registering and we agree the scope up front.';
+        out.className = 'pd-result firm';
+      } else {
+        out.textContent = 'Available — this one is yours to register. And like every check, the name never left your browser: I cannot see it, now or ever.';
+        out.className = 'pd-result ok';
+      }
+    }
+  }
+  btn.addEventListener('click', runCheck);
+  document.getElementById('pd-check-email').addEventListener('keydown', function(e){ if (e.key === 'Enter' && !btn.disabled) runCheck(); });
+})();
 </script>
 </body>
 </html>
 """
 
-PD_CHECKER_ENABLED = False  # True re-enables the Pipeline-backed name check (_partner_desk_hash_sets)
+PD_CHECKER_ENABLED = True  # False disables the Pipeline-backed name check (_partner_desk_hash_sets)
 PD_REPLIES_KEY = 'partner-desk-replies.json'
 PD_REPLY_TO = 'cgracia@rainmakersecurities.com'
 PD_REPLY_FROM = 'agent@agent.graciagroup.com'
@@ -1638,8 +1698,15 @@ def lambda_handler(event, context):
                 'body': f'<p style="font-family:sans-serif;padding:40px">Logged in as {_mint_email}.<br><br><a href="{_mint_link}">Open web-bid test link (Positron)</a></p>'}
 
     if query_params.get('view') == 'partner-desk':
-        if PD_CHECKER_ENABLED:
-            _partner_desk_hash_sets()
+        if query_params.get('hashes') == '1':
+            _pd_sets = (_partner_desk_hash_sets() if PD_CHECKER_ENABLED
+                        else {'emails': '[]', 'domains': '[]'})
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'application/json', 'Cache-Control': 'max-age=300'},
+                'body': json.dumps({'emails': json.loads(_pd_sets['emails']),
+                                    'domains': json.loads(_pd_sets['domains'])}),
+            }
         _pd_email = html_mod.escape((query_params.get('b') or '').strip(), quote=True)
         return {
             'statusCode': 200,
