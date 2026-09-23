@@ -432,6 +432,10 @@ a.pd-mail{
 }
 .pd-form textarea{min-height:5rem;max-width:100%}
 .pd-form .pd-btn{margin-top:1rem}
+.pd-thumb{display:block;width:200px;max-width:100%;margin-top:.6rem;border:1px solid #d9d6cf;border-radius:6px;cursor:zoom-in;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+#pd-zoom{display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.8);align-items:center;justify-content:center;cursor:zoom-out}
+#pd-zoom.open{display:flex}
+#pd-zoom img{max-width:92vw;max-height:92vh;object-fit:contain}
 .pd-thanks{border:1px solid var(--ledger);background:var(--ledger-soft);padding:1.2rem 1.25rem;margin-top:1.2rem}
 .pd-result{margin-top:.8rem;font-weight:600;min-height:1.4em}
 .pd-result.ok{color:var(--ledger)}
@@ -495,6 +499,11 @@ footer p{margin:0 0 .55rem}
         <td>Your client sees only the trade under discussion, and I don't reach out to them otherwise during the tail.</td>
       </tr>
       <tr>
+        <td>What your client sees</td>
+        <td class="pick">My pages. Your client gets access to <a href="https://trades.graciagroup.com/" target="_blank" rel="noopener">my full trades page</a>: live indications, deal pages, auctions, and trade updates.__PD_IMG_PARTNER__</td>
+        <td>My page for that one trade: a link only to its deal detail page, with no navigation or other buttons on top. You run the relationship.__PD_IMG_REFERRAL__</td>
+      </tr>
+      <tr>
         <td>First trade</td>
         <td class="pick"><span class="num">50%</span> of my gross fee</td>
         <td><span class="num">50%</span> of my gross fee</td>
@@ -513,11 +522,6 @@ footer p{margin:0 0 .55rem}
         <td>What counts</td>
         <td class="pick">Any trade initiated before the term ends — transfer notice, LOI, purchase agreement, or confirmed order — pays out even if it closes after.</td>
         <td>Same, for the introduced trade.</td>
-      </tr>
-      <tr>
-        <td>Your client sees</td>
-        <td class="pick">My full book: live indications, deal pages, auctions, and trade updates. Everything I send them is working toward your next check.</td>
-        <td>Only the trade under discussion — a live deal page with the rest of my book and other links removed. You run the relationship.</td>
       </tr>
       <tr>
         <td>You're kept in</td>
@@ -571,7 +575,20 @@ __PD_FORM__
   </footer>
 
 </div>
+<div id="pd-zoom"><img alt=""></div>
 <script>
+(function(){
+  var zoom = document.getElementById('pd-zoom');
+  var zimg = zoom.querySelector('img');
+  document.querySelectorAll('.pd-thumb').forEach(function(t){
+    t.addEventListener('click', function(){
+      zimg.src = t.src; zimg.alt = t.alt;
+      zoom.classList.add('open');
+    });
+  });
+  zoom.addEventListener('click', function(){ zoom.classList.remove('open'); });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') zoom.classList.remove('open'); });
+})();
 document.querySelectorAll('input[name=option]').forEach(function(r){
   r.addEventListener('change', function(){
     document.querySelectorAll('.choice').forEach(function(c){c.classList.remove('selected');});
@@ -634,6 +651,25 @@ document.querySelectorAll('input[name=option]').forEach(function(r){
 </body>
 </html>
 """
+
+
+def _pd_thumb(filename, alt):
+    """<img class=pd-thumb> with the file inlined as a data: URI, or '' (with
+    a warning) if it can't be read — the page never fails over an image."""
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pd-img', filename)
+        with open(path, 'rb') as f:
+            data = base64.b64encode(f.read()).decode('ascii')
+        return (f'<img class="pd-thumb" src="data:image/jpeg;base64,{data}" '
+                f'alt="{html_mod.escape(alt, quote=True)}" loading="lazy">')
+    except Exception as e:
+        logger.warning(f"partner-desk thumbnail {filename} unavailable: {e}")
+        return ''
+
+
+PARTNER_DESK_HTML = (PARTNER_DESK_HTML
+    .replace('__PD_IMG_PARTNER__', _pd_thumb('partner-trades.jpg', 'What the client sees: the full trades page'))
+    .replace('__PD_IMG_REFERRAL__', _pd_thumb('referral-deal.jpg', 'What the client sees: a single deal detail page')))
 
 PD_CHECKER_ENABLED = True  # False disables the Pipeline-backed name check (_partner_desk_hash_sets)
 PD_REPLIES_KEY = 'partner-desk-replies.json'
