@@ -499,7 +499,9 @@ footer p{margin:0 0 .55rem}
 
   <h2>The two tracks</h2>
 
-  <p>For a small number of brokers I trust, I'm considering the following. The old standard was 50/50 with a 12-month tail on one trade. The new version:</p>
+  <p>For a small number of brokers I trust, I'm considering two new options.</p>
+
+  <p>Under the usual arrangement, co-brokers and foreign finders lose protection once the tail ends — typically 12 months, on a single trade. The Partner track is built to keep you paid for two years.</p>
 
   <div class="termwrap">
   <table class="terms">
@@ -524,7 +526,7 @@ footer p{margin:0 0 .55rem}
       <tr>
         <td>First trade</td>
         <td class="pick"><span class="num">50%</span> of my gross fee</td>
-        <td><span class="num">50%</span> of my gross fee</td>
+        <td><span class="num">33%</span> of my gross fee</td>
       </tr>
       <tr>
         <td>Follow-on trades</td>
@@ -724,7 +726,7 @@ PARTNER_DESK_FORM = """  <form class="pd-form" method="post" action="?view=partn
   <input type="hidden" name="role" id="pd-role-field" value="cb">
   <div class="choices">
     <label class="choice"><input type="radio" name="option" value="Partner track" required><strong>Partner track</strong> — 50% of my fee on your client's first two trades, then 33% of every trade they do for the rest of the two years, on any name in my book.</label>
-    <label class="choice"><input type="radio" name="option" value="Referral track"><strong>Referral track</strong> — 50% of my fee on the trade you introduce; your client sees only that trade, and I don't reach out to them during the 12-month tail.</label>
+    <label class="choice"><input type="radio" name="option" value="Referral track"><strong>Referral track</strong> — 33% of my fee on the trade you introduce; your client sees only that trade, and I don't reach out to them during the 12-month tail.</label>
     <label class="choice"><input type="radio" name="option" value="Neither"><strong>Neither</strong> — understood; these two tracks are the only way I work with co-brokers now.</label>
   </div>
   <label class="f" for="pd-name">Name</label>
