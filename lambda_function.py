@@ -491,7 +491,7 @@ footer p{margin:0 0 .55rem}
 
   <h2>The problem as I see it</h2>
 
-  <p>You have buyers and sellers who want names I trade, and I rarely bring co-brokers my best inventory because my own book is deep enough to close it. When brokers do work together, the standard process burns time and breeds miscommunication — both of which kill deals. I know I've lost clients to other brokers exactly this way, and never saw a follow-up payment. The traditional arrangement seems designed to minimize closed trades.</p>
+  <p>You have buyers and sellers who want names I trade, and I rarely bring co-brokers my best inventory because my own book is deep enough to close it. When brokers do work together, the standard process burns time and breeds miscommunication — both of which kill deals. I know I've lost clients to other brokers after a tail ran out, and never saw a follow-up payment. The traditional arrangement seems designed to minimize closed trades.</p>
 
   <h2 class="cb-only">The dashboard</h2>
   <h2 class="ff-only">Your fee statement</h2>
