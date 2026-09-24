@@ -473,8 +473,11 @@ footer p{margin:0 0 .55rem}
     <div class="via">Chad Gracia · Registered Representative, Rainmaker Securities, LLC</div>
   </div>
 
-  <h1 class="cb-only">Reopening my desk to co-brokers: get paid on every trade, for two years, in writing.</h1>
-  <h1 class="ff-only">Opening my desk to foreign finders: get paid on every trade your clients make, for two years, in writing.</h1>
+  <h1>Your client stays yours — for two years.</h1>
+
+  <p>Most co-broker and finder agreements protect you for one trade and a 12-month tail. After that, nothing on paper keeps the client tied to you.</p>
+
+  <p>For a small number of brokers I trust, I'm offering two options built differently. On the Partner track, you're paid on every trade your client does with me for 24 months.</p>
 
   <div class="pd-role" role="radiogroup" aria-label="Which describes you?">
     <label><input type="radio" name="pd-role" value="cb" checked><span>Co-broker — FINRA-registered, with a CRD#</span></label>
@@ -488,7 +491,7 @@ footer p{margin:0 0 .55rem}
 
   <h2>The problem as I see it</h2>
 
-  <p>You have buyers and sellers who want names I trade, and I rarely bring co-brokers my best inventory because my own book is deep enough to close it. When brokers do work together, the standard process burns time and breeds miscommunication — both of which kill deals — and once a tail expires, introductions in either direction pay nobody. I know I've lost clients to other brokers exactly this way, and never saw a follow-up payment. The traditional arrangement seems designed to minimize closed trades.</p>
+  <p>You have buyers and sellers who want names I trade, and I rarely bring co-brokers my best inventory because my own book is deep enough to close it. When brokers do work together, the standard process burns time and breeds miscommunication — both of which kill deals. I know I've lost clients to other brokers exactly this way, and never saw a follow-up payment. The traditional arrangement seems designed to minimize closed trades.</p>
 
   <h2 class="cb-only">The dashboard</h2>
   <h2 class="ff-only">Your fee statement</h2>
@@ -498,10 +501,6 @@ footer p{margin:0 0 .55rem}
   <p class="cb-only">Everything in this program runs on my platform, and co-brokers get a dashboard for their registered clients: where each one stands, from onboarding paperwork (IQF) through every live trade — matched, introduced, LOI, transfer notice, SPA, wired. You're not asking me what happened; you're looking at it.</p>
 
   <h2>The two tracks</h2>
-
-  <p>For a small number of brokers I trust, I'm considering two new options.</p>
-
-  <p>Under the usual arrangement, co-brokers and foreign finders lose protection once the tail ends — typically 12 months, on a single trade. The Partner track is built to keep you paid for two years.</p>
 
   <div class="termwrap">
   <table class="terms">
