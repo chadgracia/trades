@@ -473,11 +473,11 @@ footer p{margin:0 0 .55rem}
     <div class="via">Chad Gracia · Registered Representative, Rainmaker Securities, LLC</div>
   </div>
 
-  <h1>Your client stays yours — for two years.</h1>
+  <h1>I stopped working with brokers and finders a few years ago. I'm opening the door again — for a few.</h1>
 
-  <p>Most co-broker and finder agreements protect you for one trade and a 12-month tail. After that, nothing on paper keeps the client tied to you.</p>
+  <p>Standard co-broker and finder agreements protect you for one trade and a 12-month tail. After that, nothing on paper ties the client to you. I know, because I've lost clients to other brokers that way and never saw a follow-up payment.</p>
 
-  <p>For a small number of brokers I trust, I'm offering two options built differently. On the Partner track, you're paid on every trade your client does with me for 24 months.</p>
+  <p>The terms below are built so that doesn't happen to you. On the Partner track, you're paid on every trade your client does with me for 24 months.</p>
 
   <div class="pd-role" role="radiogroup" aria-label="Which describes you?">
     <label><input type="radio" name="pd-role" value="cb" checked><span>Co-broker — FINRA-registered, with a CRD#</span></label>
@@ -491,7 +491,7 @@ footer p{margin:0 0 .55rem}
 
   <h2>The problem as I see it</h2>
 
-  <p>You have buyers and sellers who want names I trade, and I rarely bring co-brokers my best inventory because my own book is deep enough to close it. When brokers do work together, the standard process burns time and breeds miscommunication — both of which kill deals. I know I've lost clients to other brokers after a tail ran out, and never saw a follow-up payment. The traditional arrangement seems designed to minimize closed trades.</p>
+  <p>You have buyers and sellers who want names I trade, and I rarely bring co-brokers my best inventory because my own book is deep enough to close it. When brokers do work together, the standard process burns time and breeds miscommunication — both of which kill deals. The traditional arrangement seems designed to minimize closed trades.</p>
 
   <h2 class="cb-only">The dashboard</h2>
   <h2 class="ff-only">Your fee statement</h2>
