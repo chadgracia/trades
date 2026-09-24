@@ -494,12 +494,14 @@ footer p{margin:0 0 .55rem}
 
   <p>You have buyers and sellers who want names I trade, and I rarely bring co-brokers my best inventory because my own book is deep enough to close it. When brokers do work together, the standard process burns time and breeds miscommunication — both of which kill deals. The traditional arrangement seems designed to minimize closed trades.</p>
 
-  <h2 class="cb-only">The dashboard</h2>
+  <h2 class="cb-only">The solution</h2>
   <h2 class="ff-only">Your fee statement</h2>
 
   <p class="ff-only">Finders receive a statement of fees earned on each client they introduce.</p>
 
-  <p class="cb-only">Everything in this program runs on my platform, and co-brokers get a dashboard for their registered clients: where each one stands, from onboarding paperwork (IQF) through every live trade — matched, introduced, LOI, transfer notice, SPA, wired. You're not asking me what happened; you're looking at it.</p>
+  <p class="cb-only">To avoid miscommunication and close quickly: once we've signed an agreement, your client gets direct access to deal details and, often, the ability to ask the counterparty questions directly. No back-and-forth with me on pricing, fees, or ticket sizes — it's all at your client's fingertips.</p>
+
+  <p class="cb-only">You also get a dashboard for your registered clients, showing where each one stands from onboarding paperwork (IQF) through every live trade — matched, introduced, LOI, transfer notice, SPA, wired. You're not asking me what happened; you're looking at it. And you're cc'd on all communications.</p>
 
   <h2>The two tracks</h2>
 
