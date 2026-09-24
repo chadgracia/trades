@@ -486,7 +486,6 @@ footer p{margin:0 0 .55rem}
 
   <p class="lede">I've closed nearly $200M in secondary trades — almost none of it with co-brokers. Not because the relationships weren't valuable, but because the process didn't work: constant back-and-forth as terms shifted, wasted hours and miscommunication, and more than once discovering — after all that — that I was already in touch with the referred client. Delays and misinformation made closing deals almost impossible. This program is built to solve those problems.</p>
 
-  <p>And one thing up front, because it matters in our business: the term defines when I owe you money, not when I stop respecting where a relationship came from.</p>
   <p class="ff-only">A note on how this works for finders: U.S. rules let a foreign finder make the introduction, and nothing more. Your client must also be based outside the U.S. — a non-U.S. individual or an entity domiciled abroad. Once you've introduced them, I handle the relationship and the trades, and you're paid on the same schedule as a co-broker.</p>
 
   <h2>The problem as I see it</h2>
