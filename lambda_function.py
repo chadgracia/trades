@@ -28,6 +28,8 @@ LOI_PAGE_KEY = os.environ.get("LOI_PAGE_KEY", "")
 LOI_SEND_URL = "https://aep54fnrcp4bxiowlw3fvt26x40qhgpn.lambda-url.us-east-1.on.aws/"
 SYNDICATE_DASH_URL = "https://ws4stw4iul75a7yx5dra2wmnq40kipav.lambda-url.us-east-1.on.aws"
 SYNDICATE_TENANTS_URL = f"{SYNDICATE_DASH_URL}/?key=JK8h5Pq2L9aZ7rT3mN6bX&tenants=list"
+# Browser-facing seller dashboard (now served from the desk domain).
+SELLER_DASH_URL = "https://desk.graciagroup.com/dashboard/?tab=overview"
 _syndicate_tenant_cache = {"emails": None}
 
 
@@ -69,7 +71,7 @@ def _exchange_code_for_email(code):
 def _make_identity_cookie(email):
     sig = hmac.new(IDENTITY_SECRET.encode(), email.encode(), hashlib.sha256).hexdigest()
     val = base64.urlsafe_b64encode(f"{email}|{sig}".encode()).decode().rstrip("=")
-    return f"gg_id={val}; Max-Age=31536000; Path=/; Secure; SameSite=Lax"
+    return f"gg_id={val}; Max-Age=31536000; Domain=.graciagroup.com; Path=/; Secure; SameSite=Lax"
 
 
 def _get_cookie(event, name):
@@ -894,7 +896,7 @@ def _render_top_nav(event, is_admin=False):
     try:
         if email and email.strip().lower() in _syndicate_eligible_emails():
             dash_token = _make_handoff_token(email)
-            dash_href = f"{SYNDICATE_DASH_URL}/?sso={urllib.parse.quote(dash_token, safe='')}"
+            dash_href = f"{SELLER_DASH_URL}&sso={urllib.parse.quote(dash_token, safe='')}"
             dashboard_tab = f'<a href="{dash_href}" target="_blank" rel="noopener" class="nav-tab">My Dashboard</a>'
     except Exception as e:
         logger.warning(f"My Dashboard nav tab failed (non-fatal): {e}")
@@ -1810,7 +1812,7 @@ def lambda_handler(event, context):
     if query_params.get('mint_for') and query_params.get('admin_key') == 'JK8h5Pq2L9aZ7rT3mN6bX':
         _mf_email = query_params.get('mint_for').strip().lower()
         _mf_token = _make_handoff_token(_mf_email)
-        _mf_link = f"{SYNDICATE_DASH_URL}/?sso={urllib.parse.quote(_mf_token, safe='')}"
+        _mf_link = f"{SELLER_DASH_URL}&sso={urllib.parse.quote(_mf_token, safe='')}"
         _mf_link_safe = html_mod.escape(_mf_link, quote=True)
         return {'statusCode': 200, 'headers': {'Content-Type': 'text/html'},
                 'body': f'''<!DOCTYPE html>
@@ -1845,6 +1847,7 @@ def lambda_handler(event, context):
             'headers': {'Location': '/'},
             'cookies': [
                 'gg_id=; Max-Age=0; Path=/; Secure; SameSite=Lax',
+                'gg_id=; Max-Age=0; Domain=.graciagroup.com; Path=/; Secure; SameSite=Lax',
                 'CognitoIdentityServiceProvider=; Max-Age=0; Path=/; Secure; SameSite=Lax',
             ],
             'body': '',
