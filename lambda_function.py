@@ -848,7 +848,7 @@ def _nav_login_url(dest):
 
 def _render_top_nav(event, is_admin=False, active=None):
     """The shared client-facing top nav: brand, tabs (Indications, Portfolio
-    & Watchlist, two placeholder tabs, Auctions when at least one is live,
+    & Watchlist, Demand Board, Auctions when at least one is live,
     My Dashboard for eligible tenants), and the account control on the
     right. Any failure building an optional tab must not break the rest
     of the nav or the page. `active` names the tab for the current page
@@ -889,7 +889,7 @@ def _render_top_nav(event, is_admin=False, active=None):
             else:
                 auc_href = _nav_login_url(auc_dest)
             auctions_tab = (
-                f'<a href="{auc_href}" target="_blank" rel="noopener" class="nav-tab">'
+                f'<a href="{auc_href}" class="nav-tab">'
                 f'Auctions ({len(live)})</a>'
             )
     except Exception as e:
@@ -901,7 +901,7 @@ def _render_top_nav(event, is_admin=False, active=None):
         if email and email.strip().lower() in _syndicate_eligible_emails():
             dash_token = _make_handoff_token(email)
             dash_href = f"{SELLER_DASH_URL}&sso={urllib.parse.quote(dash_token, safe='')}"
-            dashboard_tab = f'<a href="{dash_href}" target="_blank" rel="noopener" class="nav-tab">My Dashboard</a>'
+            dashboard_tab = f'<a href="{dash_href}" class="nav-tab">My Dashboard</a>'
     except Exception as e:
         logger.warning(f"My Dashboard nav tab failed (non-fatal): {e}")
         dashboard_tab = ""
@@ -945,9 +945,9 @@ def _render_top_nav(event, is_admin=False, active=None):
         + ('<a href="https://trades.graciagroup.com/" class="nav-tab nav-tab-active" aria-current="page">Indications</a>'
            if active == 'indications' else
            '<a href="https://trades.graciagroup.com/" class="nav-tab">Indications</a>')
-        + f'<a href="{portfolio_href}" target="_blank" rel="noopener" class="nav-tab">Portfolio &amp; Watchlist</a>'
-        '<span class="nav-tab nav-tab-disabled" title="Coming soon">Introductions</span>'
-        f'<a href="{demand_href}" target="_blank" rel="noopener" class="nav-tab">Demand Board</a>'
+        + f'<a href="{portfolio_href}" class="nav-tab">Portfolio &amp; Watchlist</a>'
+        # Introductions tab returns here once the Introductions page is built.
+        f'<a href="{demand_href}" class="nav-tab">Demand Board</a>'
         + auctions_tab
         + dashboard_tab
         + '</div>'
@@ -2333,7 +2333,7 @@ def lambda_handler(event, context):
                 text-decoration: none;
                 white-space: nowrap;
             }}
-            /* Wrap below the width where the one-row nav fits (admin search icon + 2-digit auction count needs ~1072px). */
+            /* Allow wrapping below 1080px. The one-row nav (admin search icon + 2-digit auction count) needs ~954px, so it wraps only when it must. */
             @media (max-width: 1080px) {{
                 .topnav {{
                     flex-wrap: wrap;
