@@ -7,7 +7,6 @@ import hashlib
 import html as html_mod
 import urllib.request
 import urllib.parse
-import urllib.error
 import boto3
 import logging
 
@@ -924,18 +923,16 @@ def _render_top_nav(event, is_admin=False, active=None):
         cur_url = COGNITO_REDIRECT_URI + cur_path + (('?' + cur_qs) if cur_qs else '')
         account_html = f'<a href="{_nav_login_url(cur_url)}" class="btn nav-signin">Sign In</a>'
 
-    # Admin-only quick-switcher trigger (Cmd/Ctrl+K also opens it — see the
-    # deal-switcher script). Omitted entirely for non-admins, same as the
-    # rest of this feature.
-    deal_switcher_btn = ''
-    if is_admin:
-        deal_switcher_btn = (
-            '<button type="button" id="dealSwitcherBtn" class="nav-icon-btn" '
-            'title="Switch deal (Ctrl+K)" aria-label="Switch deal">'
-            '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">'
-            '<circle cx="6.5" cy="6.5" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4"></circle>'
-            '<line x1="9.8" y1="9.8" x2="14" y2="14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></line>'
-            '</svg></button>'
+    # Deal quick-switcher trigger, shown to every visitor (Cmd/Ctrl+K also
+    # opens it — see the deal-switcher script). Admins search the admin
+    # index; everyone else the public one.
+    deal_switcher_btn = (
+        '<button type="button" id="dealSwitcherBtn" class="nav-icon-btn" '
+        'title="Switch deal (Ctrl+K)" aria-label="Switch deal">'
+        '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false">'
+        '<circle cx="6.5" cy="6.5" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4"></circle>'
+        '<line x1="9.8" y1="9.8" x2="14" y2="14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></line>'
+        '</svg></button>'
         )
 
     return (
@@ -946,7 +943,6 @@ def _render_top_nav(event, is_admin=False, active=None):
            if active == 'indications' else
            '<a href="https://trades.graciagroup.com/" class="nav-tab">Indications</a>')
         + f'<a href="{portfolio_href}" class="nav-tab">Portfolio &amp; Watchlist</a>'
-        # Introductions tab returns here once the Introductions page is built.
         f'<a href="{demand_href}" class="nav-tab">Demand Board</a>'
         + auctions_tab
         + dashboard_tab
@@ -957,12 +953,12 @@ def _render_top_nav(event, is_admin=False, active=None):
     )
 
 
-def _render_deal_switcher_modal():
-    """Admin-only global 'Switch Deal' quick-switcher: modal markup plus its
-    script. Only ever called (and only ever appears in the rendered page)
-    for an admin session — see the _is_admin check where this is invoked.
-    Fetches /?view=admin-deal-index once per page load and caches the
-    result in memory; all filtering after that is client-side. Reuses
+def _render_deal_switcher_modal(is_admin=False):
+    """Global 'Switch Deal' quick-switcher: modal markup plus its script,
+    rendered for every visitor. Admins fetch /?view=admin-deal-index; everyone
+    else /?view=public-deal-index (grid-visible deals and fields only). The
+    index is fetched once per page load and cached in memory; all filtering
+    after that is client-side. Reuses
     copyTextToClipboard/COPY_ICON_SVG/CHECK_ICON_SVG, which are declared
     earlier in the page's own <script> block."""
     return '''
@@ -1011,7 +1007,11 @@ def _render_deal_switcher_modal():
                     return;
                 }
                 results.innerHTML = list.map(function (d, i) {
-                    var label = esc(d.company) + ' &middot; ' + esc(d.side) + ' ' + esc(fmtRange(d.size_min, d.size_max)) + ' &middot; ' + esc(d.status);
+                    var label = d.status !== undefined
+                        ? esc(d.company) + ' &middot; ' + esc(d.side) + ' ' + esc(fmtRange(d.size_min, d.size_max)) + ' &middot; ' + esc(d.status)
+                        : [d.company, d.side, d.net,
+                           d.min_size && d.max_size && d.min_size !== d.max_size ? d.min_size + '\\u2013' + d.max_size : (d.min_size || d.max_size)
+                          ].filter(Boolean).map(esc).join(' &middot; ');
                     return '<div class="deal-switcher-row' + (i === 0 ? ' active' : '') + '" data-idx="' + i + '" data-id="' + esc(d.id) + '">' +
                         '<span class="deal-switcher-label">' + label + '</span>' +
                         '<button type="button" class="deal-switcher-copy" data-id="' + esc(d.id) + '" title="Copy link" aria-label="Copy link">' + COPY_ICON_SVG + '</button>' +
@@ -1047,7 +1047,7 @@ def _render_deal_switcher_modal():
                     return;
                 }
                 results.innerHTML = '<div class="deal-switcher-empty">Loading&hellip;</div>';
-                fetch('/?view=admin-deal-index', {credentials: 'same-origin'})
+                fetch('/?view=__DEAL_INDEX_VIEW__', {credentials: 'same-origin'})
                     .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); })
                     .then(function (data) {
                         cache = (data || []).slice().sort(function (a, b) {
@@ -1114,26 +1114,20 @@ def _render_deal_switcher_modal():
             });
         })();
         </script>
-    '''
+    '''.replace('__DEAL_INDEX_VIEW__', 'admin-deal-index' if is_admin else 'public-deal-index')
+
+
+_PUBLIC_DEAL_INDEX_CACHE = {'ts': 0.0, 'rows': []}
 
 
 def _get_http_method(event):
-    """Resolve the HTTP method from a Lambda Function URL, API Gateway event,
-    or a raw invoke payload.
-
-    If the event is the raw POST body itself (a dict with a top-level 'query'
-    key and none of the standard HTTP framing fields), we treat it as a POST
-    search request — this supports direct Lambda invokes / integrations that
-    skip the HTTP wrapper entirely.
-    """
+    """Resolve the HTTP method from a Lambda Function URL or API Gateway event."""
     rc = event.get('requestContext') or {}
     http = rc.get('http') or {}
     if http.get('method'):
         return http['method']
     if event.get('httpMethod'):
         return event['httpMethod']
-    if isinstance(event, dict) and 'query' in event:
-        return 'POST'
     return 'GET'
 
 
@@ -1158,280 +1152,6 @@ def _load_directory_companies():
         return [], [], {}
 
 
-def _call_claude_for_matching_ids(query, deals):
-    """Return deal IDs matching the user's natural-language query.
-
-    Two-step pipeline:
-      1. Ask Claude to parse the query into a structured filter object. Only
-         the query text is sent to Claude — the deals data is never in the
-         model's context, which makes the request tiny (< 1K tokens total)
-         and keeps the filter step deterministic.
-      2. Apply those filters in pure Python against the full deals list.
-    """
-    filters = _extract_filters_from_query(query)
-    logger.info("Extracted filters for query %r: %s", query, filters)
-    return _apply_filters(deals, filters)
-
-
-def _extract_filters_from_query(query):
-    """Step 1: call Claude with ONLY the user's query (no deals data) and
-    have it return a structured filter object via forced tool_use."""
-    api_key = os.environ.get('ANTHROPIC_API_KEY')
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY environment variable is not set")
-
-    payload = {
-        "model": "claude-haiku-4-5-20251001",
-        "max_tokens": 1024,
-        "system": (
-            "You convert natural-language queries about private secondary market "
-            "deals into a structured filter object. You will be given a user's "
-            "query and must call the extract_filters tool with the appropriate "
-            "field values. Every field is optional — OMIT any field the user "
-            "did not explicitly specify. Do not guess or infer unmentioned "
-            "dimensions.\n"
-            "\n"
-            "FIELD GUIDE:\n"
-            "- company: Company name, normalized to the standard form. Examples: "
-            "'Space X' / 'spacex' -> 'SpaceX'. 'stripe' -> 'Stripe'. Only set "
-            "this if the user named a specific company.\n"
-            "- company_industry: A single broad sector/industry keyword when "
-            "the user mentions a theme (e.g. 'robotics', 'AI', 'drones', "
-            "'fintech', 'defense', 'space', 'healthcare'). Use one keyword "
-            "that is likely to appear in a company's industry tags. Only set "
-            "this when the user referenced a sector or theme — NOT when they "
-            "named a specific company (use the company field for that). "
-            "Matched as a case-insensitive substring against the deal's "
-            "company_industry field.\n"
-            "- type: 'Buy Order' if the user asked about bids / buys / buying / "
-            "buyers / bidders. 'Sell Order' if the user asked about offers / "
-            "asks / sells / selling / sellers. Otherwise omit.\n"
-            "- structure: 'Direct' for direct / no SPV / no wrapper / single "
-            "layer / cap-table. 'Fund' for SPV / fund / wrapper. 'Forward' for "
-            "forward contracts. Otherwise omit.\n"
-            "- min_size_max: Maximum acceptable value of a deal's min_deal_size "
-            "(the smallest ticket the deal requires). 'I have $500K' or 'deals "
-            "I can do with $500K' or 'ticket under $500K' -> 500000. The user's "
-            "budget must be >= the deal's minimum to participate.\n"
-            "- carry_max: Maximum carry percentage. 'no carry' / 'zero carry' -> "
-            "0. 'low carry' -> 10. 'carry under 15%' -> 15.\n"
-            "- management_fee_max: Maximum management fee percentage. 'no "
-            "management fee' / 'no mgmt fee' -> 0. 'low mgmt fee' -> 1.\n"
-            "- gross_max: Maximum gross price per share in USD. 'gross under "
-            "$100' -> 100.\n"
-            "- gross_min: Minimum gross price per share in USD. 'gross over "
-            "$50' -> 50.\n"
-            "- series: Share series / round. Examples: 'series B' / 'B round' "
-            "-> 'B'. 'series A' -> 'A'. 'seed' / 'seed round' -> 'Seed'. "
-            "'mixed series' -> 'Mixed'. 'N/A' for deals with no series. Only "
-            "set this if the user named a specific series/round.\n"
-            "- class: Share class. 'common' / 'common shares' / 'common stock' "
-            "-> 'Common'. 'preferred' / 'preferred stock' -> 'Preferred'. "
-            "'mixed class' -> 'Mixed'. 'any class' -> 'Any'. Otherwise omit.\n"
-            "- layers: SPV structure layering. 'on cap table' / 'cap table' / "
-            "'single layer' -> 'SPV on cap table'. '2 layers' / 'two layer' / "
-            "'2-layer' -> '2-Layer SPV'. '3 layers' / 'three layer' / "
-            "'3-layer' -> '3-Layer SPV'. Otherwise omit.\n"
-            "- stage: Deal stage. 'firm' / 'firm only' / 'confirmed details' "
-            "-> 'Firm'. 'inquiry' / 'inquiries' -> 'Inquiry'. 'confirm' / "
-            "'will confirm' -> 'Confirm'. Otherwise omit.\n"
-            "- seller_fee_max: Max seller fee percentage. 'no seller fee' -> "
-            "0. 'low seller fee' -> 1. 'seller fee under 2%' -> 2.\n"
-            "- partner_fee_max: Max partner fee percentage. 'no partner fee' "
-            "-> 0. 'low partner fee' -> 1. 'partner fee under 2%' -> 2.\n"
-            "- sort: Set ONLY when the user uses a clear superlative. "
-            "'gross_asc' for cheapest / lowest price. 'gross_desc' for most "
-            "expensive / highest price. 'min_deal_size_asc' for smallest "
-            "ticket / smallest minimum. 'max_deal_size_desc' for largest / "
-            "biggest deal. 'updated_desc' for most recent / newest / latest. "
-            "'carry_asc' for lowest carry / lowest fees. Omit otherwise.\n"
-            "\n"
-            "Only fill fields the user explicitly specified. Leave everything "
-            "else out of the tool call."
-        ),
-        "tools": [
-            {
-                "name": "extract_filters",
-                "description": (
-                    "Record the structured filter values parsed from the user's "
-                    "query. Only include fields the user explicitly specified — "
-                    "omit all others."
-                ),
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "company": {
-                            "type": "string",
-                            "description": "Company name in standard form, e.g. 'SpaceX'.",
-                        },
-                        "company_industry": {
-                            "type": "string",
-                            "description": (
-                                "Single broad sector/industry keyword "
-                                "(e.g. 'robotics', 'AI', 'drones', "
-                                "'fintech'). Matched as a case-insensitive "
-                                "substring against the deal's "
-                                "company_industry field. Do NOT set this "
-                                "when the user named a specific company; "
-                                "use 'company' instead."
-                            ),
-                        },
-                        "type": {
-                            "type": "string",
-                            "enum": ["Buy Order", "Sell Order"],
-                            "description": "'Buy Order' for bids, 'Sell Order' for offers.",
-                        },
-                        "structure": {
-                            "type": "string",
-                            "enum": ["Direct", "Fund", "Forward"],
-                            "description": "'Direct' = no wrapper, 'Fund' = SPV, 'Forward' = forward contract.",
-                        },
-                        "min_size_max": {
-                            "type": "number",
-                            "description": "Max acceptable min_deal_size in USD. e.g. 'I have $500K' -> 500000.",
-                        },
-                        "carry_max": {
-                            "type": "number",
-                            "description": "Max carry percentage. 'no carry' -> 0, 'low carry' -> 10.",
-                        },
-                        "management_fee_max": {
-                            "type": "number",
-                            "description": "Max management fee percentage. 'no mgmt fee' -> 0.",
-                        },
-                        "gross_max": {
-                            "type": "number",
-                            "description": "Max gross price per share in USD.",
-                        },
-                        "gross_min": {
-                            "type": "number",
-                            "description": "Min gross price per share in USD.",
-                        },
-                        "series": {
-                            "type": "string",
-                            "description": (
-                                "Share series/round, e.g. 'A', 'B', 'C', "
-                                "'Seed', 'Mixed', 'N/A'. Matched as a "
-                                "case-insensitive substring."
-                            ),
-                        },
-                        "class": {
-                            "type": "string",
-                            "enum": ["Common", "Preferred", "Mixed", "Any"],
-                            "description": "Share class.",
-                        },
-                        "layers": {
-                            "type": "string",
-                            "enum": [
-                                "SPV on cap table",
-                                "2-Layer SPV",
-                                "3-Layer SPV",
-                            ],
-                            "description": (
-                                "SPV layering. Matched as a case-insensitive "
-                                "substring."
-                            ),
-                        },
-                        "stage": {
-                            "type": "string",
-                            "enum": ["Firm", "Inquiry", "Confirm"],
-                            "description": (
-                                "Deal stage. 'Firm' = details confirmed, "
-                                "'Inquiry' = awaiting data, 'Confirm' = will "
-                                "confirm after bid/ask."
-                            ),
-                        },
-                        "seller_fee_max": {
-                            "type": "number",
-                            "description": "Max seller fee percentage. 'no seller fee' -> 0.",
-                        },
-                        "partner_fee_max": {
-                            "type": "number",
-                            "description": "Max partner fee percentage. 'no partner fee' -> 0.",
-                        },
-                        "sort": {
-                            "type": "string",
-                            "enum": [
-                                "gross_asc",
-                                "gross_desc",
-                                "min_deal_size_asc",
-                                "max_deal_size_desc",
-                                "updated_desc",
-                                "carry_asc",
-                            ],
-                            "description": (
-                                "Set only when the user uses a clear "
-                                "superlative. 'gross_asc' = cheapest, "
-                                "'gross_desc' = most expensive, "
-                                "'min_deal_size_asc' = smallest minimum, "
-                                "'max_deal_size_desc' = largest deal, "
-                                "'updated_desc' = most recent, "
-                                "'carry_asc' = lowest carry."
-                            ),
-                        },
-                    },
-                    "required": [],
-                },
-            }
-        ],
-        "tool_choice": {"type": "tool", "name": "extract_filters"},
-        "messages": [{"role": "user", "content": query}],
-    }
-
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=json.dumps(payload).encode('utf-8'),
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            response_body = resp.read().decode('utf-8')
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode('utf-8', errors='replace')
-        logger.error(f"Anthropic API HTTP {e.code}: {error_body}")
-        raise RuntimeError(f"Anthropic API returned HTTP {e.code}: {error_body}") from e
-    except urllib.error.URLError as e:
-        logger.error(f"Anthropic API connection error: {e.reason}")
-        raise RuntimeError(f"Anthropic API connection error: {e.reason}") from e
-
-    try:
-        result = json.loads(response_body)
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON from Anthropic API: {response_body[:500]}")
-        raise RuntimeError("Invalid JSON response from Anthropic API") from e
-
-    usage = result.get('usage') or {}
-    logger.info(
-        "Claude filter extraction usage: input=%s cache_read=%s cache_create=%s output=%s",
-        usage.get('input_tokens'),
-        usage.get('cache_read_input_tokens'),
-        usage.get('cache_creation_input_tokens'),
-        usage.get('output_tokens'),
-    )
-
-    for block in result.get('content') or []:
-        if block.get('type') == 'tool_use' and block.get('name') == 'extract_filters':
-            return block.get('input') or {}
-
-    return {}
-
-
-# Layer-hierarchy ordering used by _apply_filters. For Sell Orders a
-# request for more layers is satisfied by any offer at the same or
-# lower level (a seller on cap table / single-layer SPV can always be
-# wrapped into a deeper structure downstream).
-_LAYER_LEVELS = {
-    'spv on cap table': 1,
-    '2-layer spv': 2,
-    '3-layer spv': 3,
-}
-
-
 def _to_float(value):
     """Best-effort numeric coercion; returns None if the value can't be
     parsed as a float (None, empty string, non-numeric text, etc)."""
@@ -1443,178 +1163,6 @@ def _to_float(value):
         return None
 
 
-def _apply_filters(deals, filters):
-    """Step 2: apply a structured filter dict to the full deals list and
-    return the IDs of deals that match every non-null criterion. Missing /
-    null fields in the filter dict are treated as 'no filter on this
-    dimension'."""
-    company = filters.get('company')
-    if isinstance(company, str):
-        company = company.strip().lower() or None
-    else:
-        company = None
-
-    company_industry = filters.get('company_industry')
-    if isinstance(company_industry, str):
-        company_industry = company_industry.strip().lower() or None
-    else:
-        company_industry = None
-
-    deal_type = filters.get('type')
-    structure = filters.get('structure')
-    min_size_max = filters.get('min_size_max')
-    carry_max = filters.get('carry_max')
-    management_fee_max = filters.get('management_fee_max')
-    gross_max = filters.get('gross_max')
-    gross_min = filters.get('gross_min')
-
-    series = filters.get('series')
-    if isinstance(series, str):
-        series = series.strip().lower() or None
-    else:
-        series = None
-
-    share_class = filters.get('class')
-    stage = filters.get('stage')
-
-    layers = filters.get('layers')
-    if isinstance(layers, str):
-        layers = layers.strip().lower() or None
-    else:
-        layers = None
-
-    seller_fee_max = filters.get('seller_fee_max')
-    partner_fee_max = filters.get('partner_fee_max')
-
-    sort = filters.get('sort')
-
-    matched = []
-    matched_deals = []
-    for deal in deals:
-        if company is not None:
-            if company not in (deal.get('company') or '').strip().lower():
-                continue
-
-        if company_industry is not None:
-            if company_industry not in (deal.get('company_industry') or '').strip().lower():
-                continue
-
-        if deal_type is not None:
-            if (deal.get('type') or '').strip() != deal_type:
-                continue
-
-        if structure is not None:
-            if (deal.get('structure') or '').strip() != structure:
-                continue
-
-        if min_size_max is not None:
-            deal_min_size = _to_float(deal.get('min_deal_size'))
-            if deal_min_size is None or deal_min_size > min_size_max:
-                continue
-
-        if carry_max is not None:
-            deal_carry = _to_float(deal.get('carry'))
-            if deal_carry is None or deal_carry > carry_max:
-                continue
-
-        if management_fee_max is not None:
-            deal_fee = _to_float(deal.get('management_fee'))
-            if deal_fee is None or deal_fee > management_fee_max:
-                continue
-
-        if gross_max is not None:
-            deal_gross = _to_float(deal.get('gross'))
-            if deal_gross is None or deal_gross > gross_max:
-                continue
-
-        if gross_min is not None:
-            deal_gross = _to_float(deal.get('gross'))
-            if deal_gross is None or deal_gross < gross_min:
-                continue
-
-        if series is not None:
-            if series not in (deal.get('series') or '').strip().lower():
-                continue
-
-        if share_class is not None:
-            if (deal.get('class') or '').strip() != share_class:
-                continue
-
-        if layers is not None:
-            deal_layers_lower = (deal.get('layers') or '').strip().lower()
-            deal_type_value = (deal.get('type') or '').strip()
-            requested_level = _LAYER_LEVELS.get(layers)
-            deal_level = _LAYER_LEVELS.get(deal_layers_lower)
-
-            if (
-                deal_type_value == 'Sell Order'
-                and requested_level is not None
-                and deal_level is not None
-            ):
-                # Sell-side hierarchy: an offer at a lower layer count
-                # satisfies a request for a higher one (requesting
-                # '2-Layer SPV' also matches 'SPV on cap table').
-                if deal_level > requested_level:
-                    continue
-            else:
-                # Buy orders and unspecified/unmapped types: exact
-                # (case-insensitive substring) match.
-                if layers not in deal_layers_lower:
-                    continue
-
-        if stage is not None:
-            if (deal.get('stage') or '').strip() != stage:
-                continue
-
-        if seller_fee_max is not None:
-            deal_seller_fee = _to_float(deal.get('seller_fee'))
-            if deal_seller_fee is None or deal_seller_fee > seller_fee_max:
-                continue
-
-        if partner_fee_max is not None:
-            deal_partner_fee = _to_float(deal.get('partner_fee'))
-            if deal_partner_fee is None or deal_partner_fee > partner_fee_max:
-                continue
-
-        deal_id = deal.get('id')
-        if deal_id is not None:
-            matched.append(str(deal_id))
-            matched_deals.append(deal)
-
-    if sort and matched_deals:
-        sort_specs = {
-            'gross_asc': ('gross', False),
-            'gross_desc': ('gross', True),
-            'min_deal_size_asc': ('min_deal_size', False),
-            'max_deal_size_desc': ('max_deal_size', True),
-            'updated_desc': ('updated', True),
-            'carry_asc': ('carry', False),
-        }
-        spec = sort_specs.get(sort)
-        if spec is not None:
-            field, reverse = spec
-            # Push missing values to the end regardless of sort direction:
-            # ascending wants None to be "largest", descending wants it
-            # "smallest" (which becomes last after reverse).
-            if field == 'updated':
-                missing_sentinel = '' if reverse else '￿'
-                def _key(d):
-                    v = d.get(field)
-                    return v if v else missing_sentinel
-            else:
-                missing_sentinel = float('-inf') if reverse else float('inf')
-                def _key(d):
-                    v = _to_float(d.get(field))
-                    return missing_sentinel if v is None else v
-            matched_deals.sort(key=_key, reverse=reverse)
-            top_id = matched_deals[0].get('id')
-            if top_id is not None:
-                return [str(top_id)]
-            return []
-
-    return matched
-
-
 def _json_response(status_code, payload):
     return {
         'statusCode': status_code,
@@ -1622,39 +1170,6 @@ def _json_response(status_code, payload):
         'body': json.dumps(payload),
     }
 
-
-def _handle_search_post(event):
-    """POST handler: run a natural-language deal search and return matching IDs."""
-    body = event.get('body') or ''
-    if event.get('isBase64Encoded'):
-        try:
-            body = base64.b64decode(body).decode('utf-8')
-        except Exception as e:
-            logger.error(f"Error decoding base64 body: {str(e)}")
-            return _json_response(400, {'error': 'Invalid base64 body'})
-
-    try:
-        data = json.loads(body) if body else {}
-    except Exception:
-        return _json_response(400, {'error': 'Invalid JSON body'})
-
-    query = (data.get('query') or '').strip()
-    if not query:
-        return _json_response(400, {'error': 'Missing or empty query'})
-
-    try:
-        deals = _load_deals_from_s3()
-    except Exception as e:
-        logger.error(f"Error reading data from S3: {str(e)}")
-        return _json_response(500, {'error': f'Failed to load deals: {str(e)}'})
-
-    try:
-        matched_ids = _call_claude_for_matching_ids(query, deals)
-    except Exception as e:
-        logger.error(f"Error calling Claude API: {str(e)}")
-        return _json_response(500, {'error': f'Search failed: {str(e)}'})
-
-    return _json_response(200, {'deal_ids': matched_ids, 'count': len(matched_ids)})
 
 def get_last_updated_date(deal):
     """Returns the last updated date in 'MMM D, YYYY' format or '30d+' if older than 30 days."""
@@ -1703,7 +1218,7 @@ def lambda_handler(event, context):
     logger.info('Event received: %s', json.dumps(event))
     logger.info("Lambda function started")
 
-    # Dispatch POST requests to the natural-language search handler.
+    # Only the partner-desk reply form POSTs to this function.
     http_method = _get_http_method(event)
     if (http_method == 'POST'
             and (event.get('queryStringParameters') or {}).get('view') == 'partner-desk'):
@@ -1714,23 +1229,7 @@ def lambda_handler(event, context):
             'body': PARTNER_DESK_HTML.replace('__PD_FORM__', PARTNER_DESK_THANKS),
         }
     if http_method == 'POST':
-        # Raw invoke payload: if the event IS the search body (has a
-        # top-level 'query' and no HTTP 'body' field), wrap it into a
-        # synthetic API-Gateway-style body so _handle_search_post can
-        # parse it uniformly.
-        if 'body' not in event and 'query' in event:
-            synthetic = {'body': json.dumps({'query': event.get('query')})}
-            wrapped = _handle_search_post(synthetic)
-            # Raw-invoke callers (e.g. API Gateway non-proxy integration)
-            # expect just the JSON payload, not the {statusCode, headers,
-            # body} wrapper — they'll build the HTTP response themselves.
-            # Parse the body back out and return it directly. Fall back to
-            # the wrapper if anything unexpected happens.
-            try:
-                return json.loads(wrapped.get('body') or 'null')
-            except (AttributeError, TypeError, json.JSONDecodeError):
-                return wrapped
-        return _handle_search_post(event)
+        return _json_response(405, {'error': 'Method not allowed'})
 
     # If we're returning from Cognito with ?code=<auth_code> in the query
     # string, set the auth cookie and 302 back to the clean URL so reloads
@@ -1766,6 +1265,28 @@ def lambda_handler(event, context):
             'updated': d.get('updated'),
         } for d in _idx_deals]
         return _json_response(200, _idx_rows)
+
+    # Public deal index for the quick-switcher, open to every visitor. Only
+    # deals the public indications grid already renders (all of
+    # pipeline_deals.json) and only the grid's own text for them. Cached per
+    # container for 5 minutes.
+    if query_params.get('view') == 'public-deal-index':
+        if time.time() - _PUBLIC_DEAL_INDEX_CACHE['ts'] > 300:
+            try:
+                _pub_deals = _load_deals_from_s3()
+            except Exception as e:
+                logger.error(f"public deal-index load failed: {e}")
+                return _json_response(500, {'error': 'Failed to load deals'})
+            _PUBLIC_DEAL_INDEX_CACHE['rows'] = sorted(({
+                'id': d.get('id'),
+                'company': d.get('company'),
+                'side': 'Sell' if (d.get('type') or '').strip() == 'Sell Order' else 'Buy',
+                'net': format_currency(d.get('net'), include_cents=True),
+                'min_size': format_currency(d.get('min_deal_size')),
+                'max_size': format_currency(d.get('max_deal_size')),
+            } for d in _pub_deals), key=lambda r: (r['company'] or '').lower())
+            _PUBLIC_DEAL_INDEX_CACHE['ts'] = time.time()
+        return _json_response(200, _PUBLIC_DEAL_INDEX_CACHE['rows'])
 
     # TEMP DIAGNOSTIC ROUTE — remove after Explore Similar Companies is built.
     if query_params.get('industries') and query_params.get('admin_key') == 'JK8h5Pq2L9aZ7rT3mN6bX':
@@ -2035,7 +1556,7 @@ def lambda_handler(event, context):
     _is_admin = ('JK8h5Pq2L9aZ7rT3mN6bX' in
                  (query_params.get('admin_key'), _get_cookie(event, 'admin_key')))
     top_nav_html = _render_top_nav(event, _is_admin, active='indications')
-    deal_switcher_html = _render_deal_switcher_modal() if _is_admin else ''
+    deal_switcher_html = _render_deal_switcher_modal(_is_admin)
 
     # GA4 auth event. The Cognito return leg redirects to ?auth=1 (see above), so this
     # renders only on the pageview immediately following authentication, never on an
@@ -2114,23 +1635,6 @@ def lambda_handler(event, context):
             }}
             .title-row h1 {{
                 margin: 0;
-            }}
-            .title-row .nl-search-container {{
-                background: none;
-                box-shadow: none;
-                padding: 0;
-                margin-bottom: 0;
-                margin-top: 8px;
-                flex: 0 1 400px;
-                min-width: 260px;
-            }}
-            .title-row .nl-search-btn {{
-                margin-bottom: 0;
-                padding: 10px 16px;
-            }}
-            .title-row .nl-search-status {{
-                min-height: 0;
-                margin-top: 4px;
             }}
             .filter-section {{
                 display: flex;
@@ -2842,117 +2346,10 @@ def lambda_handler(event, context):
                 transform: translateY(0);
             }}
 
-            .nl-search-container {{
-                background-color: #f8f9fa;
-                padding: 15px 20px;
-                border-radius: 5px;
-                margin-bottom: 15px;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            }}
-            .nl-search-row {{
-                display: flex;
-                align-items: center;
-                gap: 10px;
-            }}
-            .nl-search-input {{
-                flex: 1;
-                padding: 10px 12px;
-                font-size: 14px;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                font-family: inherit;
-            }}
-            .nl-search-input:focus {{
-                outline: none;
-                border-color: var(--accent, #3d5a73);
-            }}
-            .nl-search-btn, .nl-clear-btn {{
-                padding: 10px 18px;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 14px;
-                transition: background-color 0.3s;
-                white-space: nowrap;
-            }}
-            .nl-search-btn:disabled {{
-                background-color: #95a5a6;
-                cursor: not-allowed;
-            }}
-            .nl-clear-btn {{
-                background-color: #e74c3c;
-                color: white;
-                display: none;
-            }}
-            .nl-clear-btn:hover {{
-                background-color: #c0392b;
-            }}
-            .nl-search-status {{
-                margin-top: 8px;
-                font-size: 13px;
-                color: #666;
-                min-height: 18px;
-            }}
-
         </style>
         <!-- Core application scripts -->
         <script>
             var selectedCompanies = [];
-            var searchMatchedIds = null; // Set<string> of deal IDs, or null when no search is active
-
-            function performSearch() {{
-                var input = document.getElementById('nlSearchInput');
-                var query = input.value.trim();
-                if (!query) return;
-
-                var btn = document.getElementById('nlSearchBtn');
-                var clearBtn = document.getElementById('nlClearBtn');
-                var statusEl = document.getElementById('nlSearchStatus');
-
-                btn.disabled = true;
-                btn.textContent = 'Searching...';
-                statusEl.textContent = 'Searching...';
-                statusEl.style.color = '#666';
-
-                fetch(window.location.origin + window.location.pathname, {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{query: query}})
-                }})
-                .then(function(r) {{
-                    return r.json().then(function(data) {{
-                        if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
-                        return data;
-                    }});
-                }})
-                .then(function(data) {{
-                    if (!data || !Array.isArray(data.deal_ids)) {{
-                        throw new Error('Unexpected response from search');
-                    }}
-                    searchMatchedIds = new Set(data.deal_ids.map(String));
-                    clearBtn.style.display = 'inline-block';
-                    filterTable();
-                    var matchCount = searchMatchedIds.size;
-                    statusEl.textContent = matchCount + ' match' + (matchCount === 1 ? '' : 'es') + ' for: "' + query + '"';
-                    statusEl.style.color = '#2c3e50';
-                }})
-                .catch(function(err) {{
-                    statusEl.textContent = 'Search failed: ' + err.message;
-                    statusEl.style.color = '#c0392b';
-                }})
-                .finally(function() {{
-                    btn.disabled = false;
-                    btn.textContent = 'Go';
-                }});
-            }}
-
-            function clearSearch() {{
-                searchMatchedIds = null;
-                document.getElementById('nlSearchInput').value = '';
-                document.getElementById('nlClearBtn').style.display = 'none';
-                document.getElementById('nlSearchStatus').textContent = '';
-                filterTable();
-            }}
 
             function formatDollarAmount(amount) {{
                 if (amount >= 1000000) {{
@@ -3067,13 +2464,6 @@ def lambda_handler(event, context):
                     
                     if (selectedCompanies.length > 0 && selectedCompanies.indexOf(company) === -1) {{
                         show = false;
-                    }}
-
-                    if (searchMatchedIds !== null) {{
-                        var dealIdStr = row.getAttribute('data-deal-id');
-                        if (dealIdStr === null || !searchMatchedIds.has(dealIdStr)) {{
-                            show = false;
-                        }}
                     }}
 
                     row.style.display = show ? '' : 'none';
@@ -3361,14 +2751,6 @@ def lambda_handler(event, context):
         <div class="header">
             <div class="title-row">
                 <h1>Indications for Accredited Investors <span id="dealCount" class="deal-count"></span></h1>
-                <div class="nl-search-container">
-                    <div class="nl-search-row">
-                        <input type="text" id="nlSearchInput" class="nl-search-input" placeholder="Search a company, or ask a question" onkeydown="if(event.key==='Enter'){{performSearch()}}">
-                        <button id="nlSearchBtn" class="nl-search-btn btn" onclick="performSearch()">Go</button>
-                        <button id="nlClearBtn" class="nl-clear-btn" onclick="clearSearch()">Clear</button>
-                    </div>
-                    <div id="nlSearchStatus" class="nl-search-status"></div>
-                </div>
             </div>
             <p class="subtitle">Search our full book of live private securities opportunities.</p>
             <div class="filter-section">
