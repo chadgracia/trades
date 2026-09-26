@@ -2290,37 +2290,54 @@ def lambda_handler(event, context):
             .topnav {{
                 display: flex;
                 align-items: center;
-                flex-wrap: wrap;
-                gap: 16px;
+                flex-wrap: nowrap;
+                gap: 12px;
                 padding: 10px 0;
                 margin-bottom: 10px;
                 border-bottom: 1px solid #ddd;
             }}
             .nav-brand {{
+                display: inline-block;
+                background-color: #eef2f6;
+                border: 1px solid #d7dee6;
+                border-radius: 999px;
+                padding: 7px 11px;
+                font-size: 13.5px;
                 font-weight: 700;
-                font-size: 17px;
-                color: var(--ink);
+                color: var(--accent, #3d5a73);
                 text-decoration: none;
                 white-space: nowrap;
+                flex-shrink: 0;
             }}
             .nav-tabs {{
                 display: flex;
                 align-items: center;
-                flex-wrap: wrap;
-                gap: 18px;
+                flex-wrap: nowrap;
+                gap: 6px;
                 flex: 1;
+                min-width: 0;
             }}
             .nav-tab {{
                 display: inline-block;
                 background-color: #fff;
                 border: 1px solid #ddd;
                 border-radius: 999px;
-                padding: 8px 16px;
-                font-size: 14px;
+                padding: 7px 11px;
+                font-size: 13.5px;
                 font-weight: 600;
                 color: var(--ink);
                 text-decoration: none;
                 white-space: nowrap;
+            }}
+            /* Wrap below the width where the one-row nav fits (admin search icon + 2-digit auction count needs ~1072px). */
+            @media (max-width: 1080px) {{
+                .topnav {{
+                    flex-wrap: wrap;
+                }}
+                .nav-tabs {{
+                    flex-wrap: wrap;
+                    min-width: auto;
+                }}
             }}
             .nav-tab:hover {{
                 background-color: #f0f0f0;
