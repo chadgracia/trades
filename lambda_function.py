@@ -846,12 +846,14 @@ def _nav_login_url(dest):
     )
 
 
-def _render_top_nav(event, is_admin=False):
+def _render_top_nav(event, is_admin=False, active=None):
     """The shared client-facing top nav: brand, tabs (Indications, Portfolio
     & Watchlist, two placeholder tabs, Auctions when at least one is live,
     My Dashboard for eligible tenants), and the account control on the
     right. Any failure building an optional tab must not break the rest
-    of the nav or the page."""
+    of the nav or the page. `active` names the tab for the current page
+    ('indications' is the only one trades renders); it gets .nav-tab-active
+    and aria-current="page"."""
     email = _read_identity_email(event)
 
     # Portfolio & Watchlist: admin identity wins outright, same rule the old
@@ -940,8 +942,10 @@ def _render_top_nav(event, is_admin=False):
         '<nav class="topnav">'
         '<a href="https://www.graciagroup.com" class="nav-brand">Gracia Group</a>'
         '<div class="nav-tabs">'
-        '<a href="https://trades.graciagroup.com/" class="nav-tab">Indications</a>'
-        f'<a href="{portfolio_href}" target="_blank" rel="noopener" class="nav-tab">Portfolio &amp; Watchlist</a>'
+        + ('<a href="https://trades.graciagroup.com/" class="nav-tab nav-tab-active" aria-current="page">Indications</a>'
+           if active == 'indications' else
+           '<a href="https://trades.graciagroup.com/" class="nav-tab">Indications</a>')
+        + f'<a href="{portfolio_href}" target="_blank" rel="noopener" class="nav-tab">Portfolio &amp; Watchlist</a>'
         '<span class="nav-tab nav-tab-disabled" title="Coming soon">Introductions</span>'
         f'<a href="{demand_href}" target="_blank" rel="noopener" class="nav-tab">Demand Board</a>'
         + auctions_tab
@@ -2030,7 +2034,7 @@ def lambda_handler(event, context):
     # writes once the parameter has been seen.
     _is_admin = ('JK8h5Pq2L9aZ7rT3mN6bX' in
                  (query_params.get('admin_key'), _get_cookie(event, 'admin_key')))
-    top_nav_html = _render_top_nav(event, _is_admin)
+    top_nav_html = _render_top_nav(event, _is_admin, active='indications')
     deal_switcher_html = _render_deal_switcher_modal() if _is_admin else ''
 
     # GA4 auth event. The Cognito return leg redirects to ?auth=1 (see above), so this
@@ -2341,6 +2345,12 @@ def lambda_handler(event, context):
             }}
             .nav-tab:hover {{
                 background-color: #f0f0f0;
+            }}
+            .nav-tab-active,
+            .nav-tab-active:hover {{
+                background-color: #1a1a1a;
+                border-color: #1a1a1a;
+                color: #fff;
             }}
             .nav-tab-disabled {{
                 color: #999;
