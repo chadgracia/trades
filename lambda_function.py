@@ -24,9 +24,13 @@ COGNITO_CLIENT_SECRET = os.environ.get("COGNITO_CLIENT_SECRET", "")
 IDENTITY_SECRET = os.environ.get("IDENTITY_SECRET", "")
 NUDGE_KEY = os.environ.get("NUDGE_KEY", "")
 LOI_PAGE_KEY = os.environ.get("LOI_PAGE_KEY", "")
+# Shared admin key. Server-side only: never render it into a page. Empty
+# means admin is disabled (every check fails closed).
+ADMIN_KEY = os.environ.get("ADMIN_KEY", "")
 LOI_SEND_URL = "https://aep54fnrcp4bxiowlw3fvt26x40qhgpn.lambda-url.us-east-1.on.aws/"
 SYNDICATE_DASH_URL = "https://ws4stw4iul75a7yx5dra2wmnq40kipav.lambda-url.us-east-1.on.aws"
-SYNDICATE_TENANTS_URL = f"{SYNDICATE_DASH_URL}/?key=JK8h5Pq2L9aZ7rT3mN6bX&tenants=list"
+SYNDICATE_TENANTS_URL = (f"{SYNDICATE_DASH_URL}/?key={urllib.parse.quote(ADMIN_KEY, safe='')}&tenants=list"
+                         if ADMIN_KEY else "")
 # Browser-facing seller dashboard (now served from the desk domain).
 SELLER_DASH_URL = "https://desk.graciagroup.com/dashboard/?tab=overview"
 _syndicate_tenant_cache = {"emails": None}
@@ -71,6 +75,11 @@ def _make_identity_cookie(email):
     sig = hmac.new(IDENTITY_SECRET.encode(), email.encode(), hashlib.sha256).hexdigest()
     val = base64.urlsafe_b64encode(f"{email}|{sig}".encode()).decode().rstrip("=")
     return f"gg_id={val}; Max-Age=31536000; Domain=.graciagroup.com; Path=/; Secure; SameSite=Lax"
+
+
+def _is_admin_key(value):
+    """True only when ADMIN_KEY is configured and value matches it."""
+    return bool(ADMIN_KEY and value) and hmac.compare_digest(str(value), ADMIN_KEY)
 
 
 def _get_cookie(event, name):
@@ -124,6 +133,10 @@ def _syndicate_eligible_emails():
     if _syndicate_tenant_cache["emails"] is not None:
         return _syndicate_tenant_cache["emails"]
     emails = set()
+    if not SYNDICATE_TENANTS_URL:
+        logger.warning("ADMIN_KEY not set; skipping Syndicate tenants fetch")
+        _syndicate_tenant_cache["emails"] = emails
+        return emails
     try:
         req = urllib.request.Request(SYNDICATE_TENANTS_URL)
         with urllib.request.urlopen(req, timeout=3) as resp:
@@ -249,7 +262,6 @@ def _partner_desk_hash_sets():
         return _PD_HASH_CACHE
 
 
-_PD_ANALYZE_KEY = 'JK8h5Pq2L9aZ7rT3mN6bX'
 
 _PD_ANALYZE_FREEMAIL = {
     "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com", "icloud.com",
@@ -1246,8 +1258,8 @@ def lambda_handler(event, context):
     _raw_path = (event.get('rawPath')
                  or (event.get('requestContext') or {}).get('http', {}).get('path') or '')
     if _raw_path.rstrip('/').endswith('/api/admin/deal-index') or query_params.get('view') == 'admin-deal-index':
-        _idx_is_admin = ('JK8h5Pq2L9aZ7rT3mN6bX' in
-                          (query_params.get('admin_key'), _get_cookie(event, 'admin_key')))
+        _idx_is_admin = (_is_admin_key(query_params.get('admin_key'))
+                         or _is_admin_key(_get_cookie(event, 'admin_key')))
         if not _idx_is_admin:
             return _json_response(403, {'error': 'Forbidden'})
         try:
@@ -1289,7 +1301,7 @@ def lambda_handler(event, context):
         return _json_response(200, _PUBLIC_DEAL_INDEX_CACHE['rows'])
 
     # TEMP DIAGNOSTIC ROUTE — remove after Explore Similar Companies is built.
-    if query_params.get('industries') and query_params.get('admin_key') == 'JK8h5Pq2L9aZ7rT3mN6bX':
+    if query_params.get('industries') and _is_admin_key(query_params.get('admin_key')):
         _diag_deals = _load_deals_from_s3()
         _diag_rows = []
         _diag_seen = set()
@@ -1336,7 +1348,7 @@ def lambda_handler(event, context):
     # Admin: mint a Syndicate Dashboard magic link for any email, no login
     # required on this browser -- admin_key is the sole gate, same shared
     # key as the diagnostic route above.
-    if query_params.get('mint_for') and query_params.get('admin_key') == 'JK8h5Pq2L9aZ7rT3mN6bX':
+    if query_params.get('mint_for') and _is_admin_key(query_params.get('admin_key')):
         _mf_email = query_params.get('mint_for').strip().lower()
         _mf_token = _make_handoff_token(_mf_email)
         _mf_link = f"{SELLER_DASH_URL}&sso={urllib.parse.quote(_mf_token, safe='')}"
@@ -1355,7 +1367,7 @@ def lambda_handler(event, context):
 </body></html>'''}
 
     if query_params.get('view') == 'pd-analyze':
-        if query_params.get('key') != _PD_ANALYZE_KEY:
+        if not _is_admin_key(query_params.get('key')):
             return {'statusCode': 404, 'headers': {'Content-Type': 'text/plain; charset=utf-8'}, 'body': 'Not found'}
         try:
             report = _pd_analyze_report()
@@ -1550,11 +1562,11 @@ def lambda_handler(event, context):
     non_highlighted_company_buttons = " ".join([_company_btn(company) for company in non_highlighted_companies])
 
 
-    # No admin boolean exists in Python here, so derive one the same way the page's
-    # own JS does: the admin_key query parameter, or the admin_key cookie that JS
-    # writes once the parameter has been seen.
-    _is_admin = ('JK8h5Pq2L9aZ7rT3mN6bX' in
-                 (query_params.get('admin_key'), _get_cookie(event, 'admin_key')))
+    # Admin status is decided here only and rendered into the page as a bare
+    # boolean: the admin_key query parameter, or the HttpOnly admin_key cookie
+    # the server sets (below) once the parameter has been seen.
+    _admin_param_ok = _is_admin_key(query_params.get('admin_key'))
+    _is_admin = _admin_param_ok or _is_admin_key(_get_cookie(event, 'admin_key'))
     top_nav_html = _render_top_nav(event, _is_admin, active='indications')
     deal_switcher_html = _render_deal_switcher_modal(_is_admin)
 
@@ -2559,8 +2571,7 @@ def lambda_handler(event, context):
                     }}
 
                     const params = new URLSearchParams(window.location.search);
-                    const adminKey = params.get('admin_key');
-                    const isAdmin = adminKey === 'JK8h5Pq2L9aZ7rT3mN6bX' || getCookie('admin_key') === 'JK8h5Pq2L9aZ7rT3mN6bX';
+                    const isAdmin = {'true' if _is_admin else 'false'};
 
                     if (isAdmin) {{
                         document.querySelectorAll('.nudge-bell').forEach(function(b) {{
@@ -2578,10 +2589,6 @@ def lambda_handler(event, context):
                             var br = td ? td.querySelector('.nudge-br') : null;
                             if (br) br.style.display = 'inline';
                         }});
-                    }}
-
-                    if (adminKey === 'JK8h5Pq2L9aZ7rT3mN6bX') {{
-                        document.cookie = 'admin_key=' + adminKey + '; max-age=' + (86400 * 365) + '; path=/';
                     }}
 
                     const cognitoCookie = getCookie('CognitoIdentityServiceProvider');
@@ -2864,8 +2871,13 @@ def lambda_handler(event, context):
     </html>
     """
     
-    return {
+    _page_response = {
         'statusCode': 200,
         'headers': {'Content-Type': 'text/html'},
         'body': html_content
     }
+    if _admin_param_ok:
+        _page_response['cookies'] = [
+            f"admin_key={ADMIN_KEY}; Max-Age=31536000; Path=/; Secure; HttpOnly; SameSite=Lax"
+        ]
+    return _page_response
