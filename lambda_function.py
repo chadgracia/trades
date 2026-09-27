@@ -1510,6 +1510,12 @@ def lambda_handler(event, context):
 
     
     # Build the table rows
+    # Admin status is decided here only and rendered into the page as a bare
+    # boolean: the admin_key query parameter, or the HttpOnly admin_key cookie
+    # the server sets (below) once the parameter has been seen.
+    _admin_param_ok = _is_admin_key(query_params.get('admin_key'))
+    _is_admin = _admin_param_ok or _is_admin_key(_get_cookie(event, 'admin_key'))
+
     table_rows = ""
     for deal in deals:
         stage_tooltips = {
@@ -1538,6 +1544,10 @@ def lambda_handler(event, context):
         gross_valuation_text = format_valuation(gross_valuation).strip()
 
 
+        # Nudge/LOI links carry NUDGE_KEY / LOI_PAGE_KEY, so they are only
+        # rendered for admins; non-admin HTML never contains them.
+        admin_links = (f'''<br class="nudge-br" style="display:none;"><a class="nudge-bell" data-deal-id="{deal['id']}" style="display:none;margin-top:4px;text-decoration:none;" href="https://ak5zolfpynhrimrsuw5rbjchwu0ktexz.lambda-url.us-east-1.on.aws/?deal_id={deal['id']}&key={NUDGE_KEY}" target="_blank" rel="noopener" title="Nudge client to update or cancel" onclick="if(!confirm('Send an update request to this client?'))return false;localStorage.setItem('nudge_'+this.getAttribute('data-deal-id'),Date.now());this.style.display='none';var br=this.previousElementSibling;if(br&&br.tagName==='BR')br.style.display='none';return true;">🔔</a><a class="loi-send" data-deal-id="{deal['id']}" style="display:none;margin-left:7px;text-decoration:none;" href="{LOI_SEND_URL}?send=1&deal_id={deal['id']}&key={LOI_PAGE_KEY}" target="_blank" rel="noopener" title="Email this client a Letter of Intent link" onclick="if(!confirm('Email an LOI link to this client?'))return false;localStorage.setItem('loi_'+this.getAttribute('data-deal-id'),Date.now());this.style.display='none';return true;">✍️</a>''' if _is_admin else "")
+
         table_rows += f"""
         <tr class="deal-row {deal['type'].lower()} {deal['structure_class']}" data-deal-id="{deal['id']}" data-management-fee="{deal['management_fee']}" data-carry="{deal['carry']}" data-stage="{deal['stage']}" data-data-room="{deal['data_room']}" data-highlighted="{deal['highlighted']}" data-layers="{deal.get('layers') or ''}">
             <td><a href="https://trades.graciagroup.com/deal/{deal['id']}">{deal['id']}</a><br><button type="button" class="copy-id" data-copy-id="{deal['id']}" title="Copy deal ID" aria-label="Copy deal ID {deal['id']}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"></path></svg></button></td>
@@ -1552,7 +1562,7 @@ def lambda_handler(event, context):
             <td>{format_currency(deal['company_lr_val'], include_cents=True)}</td>
             <td>{deal['management_fee']}</td>
             <td>{deal['carry']}</td>
-            <td style="text-align:center;">{get_last_updated_date(deal)}<br class="nudge-br" style="display:none;"><a class="nudge-bell" data-deal-id="{deal['id']}" style="display:none;margin-top:4px;text-decoration:none;" href="https://ak5zolfpynhrimrsuw5rbjchwu0ktexz.lambda-url.us-east-1.on.aws/?deal_id={deal['id']}&key={NUDGE_KEY}" target="_blank" rel="noopener" title="Nudge client to update or cancel" onclick="if(!confirm('Send an update request to this client?'))return false;localStorage.setItem('nudge_'+this.getAttribute('data-deal-id'),Date.now());this.style.display='none';var br=this.previousElementSibling;if(br&&br.tagName==='BR')br.style.display='none';return true;">🔔</a><a class="loi-send" data-deal-id="{deal['id']}" style="display:none;margin-left:7px;text-decoration:none;" href="{LOI_SEND_URL}?send=1&deal_id={deal['id']}&key={LOI_PAGE_KEY}" target="_blank" rel="noopener" title="Email this client a Letter of Intent link" onclick="if(!confirm('Email an LOI link to this client?'))return false;localStorage.setItem('loi_'+this.getAttribute('data-deal-id'),Date.now());this.style.display='none';return true;">✍️</a></td>
+            <td style="text-align:center;">{get_last_updated_date(deal)}{admin_links}</td>
         </tr>
         """
 
@@ -1562,11 +1572,6 @@ def lambda_handler(event, context):
     non_highlighted_company_buttons = " ".join([_company_btn(company) for company in non_highlighted_companies])
 
 
-    # Admin status is decided here only and rendered into the page as a bare
-    # boolean: the admin_key query parameter, or the HttpOnly admin_key cookie
-    # the server sets (below) once the parameter has been seen.
-    _admin_param_ok = _is_admin_key(query_params.get('admin_key'))
-    _is_admin = _admin_param_ok or _is_admin_key(_get_cookie(event, 'admin_key'))
     top_nav_html = _render_top_nav(event, _is_admin, active='indications')
     deal_switcher_html = _render_deal_switcher_modal(_is_admin)
 
