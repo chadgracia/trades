@@ -533,7 +533,7 @@ footer p{margin:0 0 .55rem}
       </tr>
       <tr>
         <td>What your client sees</td>
-        <td class="pick">My pages. Your client gets access to <a href="https://trades.graciagroup.com/" target="_blank" rel="noopener">my full trades page</a>: live indications, deal pages, auctions, and trade updates.__PD_IMG_PARTNER__</td>
+        <td class="pick">My pages. Your client gets access to <a href="https://trades.graciagroup.com/" target="_blank" rel="noopener">my full trades page</a>: live indications, deal pages, and trade updates.__PD_IMG_PARTNER__</td>
         <td>My page for that one trade: a link only to its deal detail page, with no navigation or other buttons on top.<span class="cb-only"> You run the relationship.</span>__PD_IMG_REFERRAL__</td>
       </tr>
       <tr>
@@ -891,7 +891,7 @@ def _render_top_nav(event, is_admin=False, active=None):
     auctions_tab = ""
     try:
         live = _live_auctions_for_nav()
-        if live:
+        if live and is_admin:
             auc_dest = f"{DESK_URL}/?view=auctions"
             if email:
                 auc_token = _make_handoff_token(email)
