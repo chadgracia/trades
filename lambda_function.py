@@ -159,13 +159,18 @@ _PD_HASH_CACHE = {'ts': 0.0, 'emails': '[]', 'domains': '[]'}
 PD_SEARCH_ID = 20538950  # "S: Partner Desk Check" — Whitelist-tagged clients
 
 
+def _pipeline_auth_qs():
+    """Pipeline CRM query-string auth, appended to an existing query string."""
+    return ("&api_key=ZRMHN4uJotjRDcZa8hKi"
+            + "&app_key=571978be28bd3b5b515a2cc5db96b674")
+
+
 def _pd_fetch_search_page(page):
     url = (
         "https://api.pipelinecrm.com/api/v3/searches/"
         + str(PD_SEARCH_ID)
         + "/perform.json?per_page=200&page=" + str(page)
-        + "&api_key=ZRMHN4uJotjRDcZa8hKi"
-        + "&app_key=571978be28bd3b5b515a2cc5db96b674"
+        + _pipeline_auth_qs()
     )
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=15) as resp:
@@ -1150,6 +1155,159 @@ def _load_deals_from_s3():
     return json.loads(response['Body'].read().decode('utf-8'))
 
 
+SERVED_DEALS_BUCKET = "full-pipeline-cache"
+SERVED_DEALS_KEY = "served-deals.json"
+SITEMAP_DEAL_TYPE_IDS = {5011675, 5077819}  # Sell Order, Buy Order
+SITEMAP_MAX_URLS = 45000
+_SITEMAP_CACHE = {'ts': 0.0, 'xml': None}
+
+
+def _sitemap_date(value):
+    """'2026/09/22 14:03:11 -0000' -> '2026-09-22'. '' if unusable."""
+    s = str(value or '').strip().replace('/', '-')[:10]
+    try:
+        datetime.strptime(s, '%Y-%m-%d')
+        return s
+    except ValueError:
+        return ''
+
+
+def _sitemap_excluded(company_name, deal_name):
+    c = (company_name or '').strip()
+    return ('anthropic' in c.lower()
+            or 'anthropic' in (deal_name or '').lower()
+            or c.endswith('$'))
+
+
+def _sitemap_has_order_type(value):
+    """custom_label_1958 may be an int, a string, or a list of either."""
+    vals = value if isinstance(value, list) else [value]
+    for v in vals:
+        try:
+            if int(str(v).strip()) in SITEMAP_DEAL_TYPE_IDS:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _sitemap_cutoff():
+    return (datetime.now(timezone.utc) - timedelta(days=1095)).strftime('%Y-%m-%d')
+
+
+def _sitemap_keep_pipeline_deal(deal, cutoff):
+    created = _sitemap_date(deal.get('created_at'))
+    if not created or created < cutoff:
+        return False
+    if not _sitemap_has_order_type((deal.get('custom_fields') or {}).get('custom_label_1958')):
+        return False
+    company = deal.get('company')
+    company_name = (company.get('name') if isinstance(company, dict) and company.get('name')
+                    else deal.get('company_name', ''))
+    return not _sitemap_excluded(company_name, deal.get('name'))
+
+
+def _load_served_deals(s3):
+    """served-deals.json, or the empty shape if it doesn't exist. Other errors raise."""
+    try:
+        obj = s3.get_object(Bucket=SERVED_DEALS_BUCKET, Key=SERVED_DEALS_KEY)
+    except Exception as e:
+        code = (getattr(e, 'response', None) or {}).get('Error', {}).get('Code')
+        if code in ('NoSuchKey', '404'):
+            return {'deals': {}, 'backfill': {'next_page': 1, 'done': False}}
+        raise
+    data = json.loads(obj['Body'].read().decode('utf-8'))
+    data.setdefault('deals', {})
+    data.setdefault('backfill', {'next_page': 1, 'done': False})
+    return data
+
+
+def _save_served_deals(s3, data):
+    s3.put_object(Bucket=SERVED_DEALS_BUCKET, Key=SERVED_DEALS_KEY,
+                  Body=json.dumps(data).encode('utf-8'),
+                  ContentType='application/json')
+
+
+def _sitemap_backfill(restart=False):
+    """One batch of the admin backfill. Returns (added, total, done)."""
+    s3 = boto3.client('s3')
+    data = _load_served_deals(s3)
+    bf = data['backfill']
+    if restart:
+        bf['next_page'] = 1
+        bf['done'] = False
+    added = 0
+    if not bf.get('done'):
+        cutoff = _sitemap_cutoff()
+        page = int(bf.get('next_page') or 1)
+        start = time.time()
+        for i in range(8):
+            if time.time() - start > 20:
+                break
+            url = ("https://api.pipelinecrm.com/api/v3/deals.json?per_page=200&page="
+                   + str(page) + _pipeline_auth_qs())
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    payload = json.loads(resp.read().decode())
+            except Exception as e:
+                if i == 0:
+                    raise
+                # Keep progress from earlier pages; next click retries this page.
+                logger.error(f"sitemap backfill page {page} failed: {e}")
+                break
+            entries = payload.get('entries') or []
+            for d in entries:
+                if d.get('id') is None or not _sitemap_keep_pipeline_deal(d, cutoff):
+                    continue
+                key = str(d['id'])
+                if key not in data['deals']:
+                    added += 1
+                data['deals'][key] = {'updated': _sitemap_date(d.get('updated_at'))
+                                      or datetime.now(timezone.utc).strftime('%Y-%m-%d')}
+            page += 1
+            pages = (payload.get('pagination') or {}).get('pages')
+            if not entries or (pages is not None and page > int(pages)):
+                bf['done'] = True
+                break
+        bf['next_page'] = page
+    _save_served_deals(s3, data)
+    return added, len(data['deals']), bool(bf.get('done'))
+
+
+def _build_sitemap_xml():
+    s3 = boto3.client('s3')
+    data = _load_served_deals(s3)
+    live = _load_deals_from_s3()
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    changed = False
+    for d in live:
+        if d.get('id') is None:
+            continue
+        key = str(d['id'])
+        if key in data['deals']:
+            continue
+        company = d.get('company')
+        if isinstance(company, dict):
+            company = company.get('name', '')
+        if _sitemap_excluded(company, d.get('name')):
+            continue
+        data['deals'][key] = {'updated': _sitemap_date(d.get('updated')) or today}
+        changed = True
+    if changed:
+        _save_served_deals(s3, data)
+    rows = sorted(((k, (v or {}).get('updated') or today) for k, v in data['deals'].items()),
+                  key=lambda r: r[1], reverse=True)[:SITEMAP_MAX_URLS]
+    parts = ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for k, lastmod in rows:
+        parts.append('  <url><loc>https://trades.graciagroup.com/deal/'
+                     + html_mod.escape(urllib.parse.quote(k, safe=''))
+                     + '</loc><lastmod>' + html_mod.escape(lastmod) + '</lastmod></url>')
+    parts.append('</urlset>')
+    return '\n'.join(parts) + '\n'
+
+
 def _load_directory_companies():
     """Read the small directory_companies.json (a few KB) written by crm-snapshot.
     Returns (highlight_names, list_names). Read-only; any failure returns empty
@@ -1249,6 +1407,44 @@ def lambda_handler(event, context):
     # suppressed on subsequent visits via the cookie the client-side JS
     # already checks).
     query_params = event.get('queryStringParameters') or {}
+
+    # Admin-only batch backfill of served-deals.json from Pipeline (sitemap source).
+    if query_params.get('view') == 'sitemap-backfill':
+        if not (_is_admin_key(query_params.get('admin_key'))
+                or _is_admin_key(_get_cookie(event, 'admin_key'))):
+            return {'statusCode': 403,
+                    'headers': {'Content-Type': 'text/plain; charset=utf-8'},
+                    'body': 'Forbidden'}
+        try:
+            _bf_added, _bf_total, _bf_done = _sitemap_backfill(
+                restart=query_params.get('restart') == '1')
+        except Exception as e:
+            logger.error(f"sitemap backfill failed: {e}")
+            return {'statusCode': 500,
+                    'headers': {'Content-Type': 'text/plain; charset=utf-8'},
+                    'body': f'Backfill error: {e}'}
+        _bf_tail = ('<p>Backfill complete.</p>' if _bf_done
+                    else '<p><a href="?view=sitemap-backfill">Continue &rarr;</a></p>')
+        return {'statusCode': 200,
+                'headers': {'Content-Type': 'text/html; charset=utf-8'},
+                'body': ('<!doctype html><html><body><p>Added ' + str(_bf_added)
+                         + ' deals this batch. Total in list: ' + str(_bf_total)
+                         + '.</p>' + _bf_tail + '</body></html>')}
+
+    # Public deal sitemap. Not linked from any page.
+    if query_params.get('view') == 'sitemap-deals':
+        if _SITEMAP_CACHE['xml'] is None or time.time() - _SITEMAP_CACHE['ts'] > 3600:
+            try:
+                _SITEMAP_CACHE['xml'] = _build_sitemap_xml()
+                _SITEMAP_CACHE['ts'] = time.time()
+            except Exception as e:
+                logger.error(f"sitemap-deals build failed: {e}")
+                return {'statusCode': 503,
+                        'headers': {'Content-Type': 'text/plain; charset=utf-8'},
+                        'body': 'Sitemap temporarily unavailable'}
+        return {'statusCode': 200,
+                'headers': {'Content-Type': 'application/xml; charset=utf-8'},
+                'body': _SITEMAP_CACHE['xml']}
 
     # Admin-only global deal index for the header quick-switcher. Same
     # admin_key gate (query param or cookie) as every other admin route in
