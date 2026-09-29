@@ -4,6 +4,7 @@ import time
 import base64
 import hmac
 import hashlib
+import random
 import html as html_mod
 import urllib.request
 import urllib.parse
@@ -34,6 +35,58 @@ SYNDICATE_TENANTS_URL = (f"{SYNDICATE_DASH_URL}/?key={urllib.parse.quote(ADMIN_K
 # Browser-facing seller dashboard (now served from the desk domain).
 SELLER_DASH_URL = "https://desk.graciagroup.com/dashboard/?tab=overview"
 _syndicate_tenant_cache = {"emails": None}
+GA_MEASUREMENT_ID = "G-L9JN3TRR2S"
+GA_MP_SECRET = os.environ.get("GA_MP_SECRET", "")
+COGNITO_USER_POOL_ID = "us-east-1_dsttCAQX7"
+
+
+def _cognito_is_new_user(email):
+    """True if the Cognito user was created in the last 30 minutes, False if
+    older, None if unknown (any error). Never raises."""
+    try:
+        idp = boto3.client('cognito-idp', region_name='us-east-1')
+        try:
+            created = idp.admin_get_user(UserPoolId=COGNITO_USER_POOL_ID,
+                                         Username=email)['UserCreateDate']
+        except Exception as e:
+            code = (getattr(e, 'response', None) or {}).get('Error', {}).get('Code')
+            if code != 'UserNotFoundException' and type(e).__name__ != 'UserNotFoundException':
+                raise
+            users = idp.list_users(UserPoolId=COGNITO_USER_POOL_ID,
+                                   Filter=f'email = "{email}"', Limit=1)['Users']
+            created = users[0]['UserCreateDate']
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) - created <= timedelta(minutes=30)
+    except Exception as e:
+        logger.warning(f"Cognito new-user check failed (non-fatal): {type(e).__name__}")
+        return None
+
+
+def _ga_send_event(event, name):
+    """Fire one GA4 Measurement Protocol event. No PII. Never raises."""
+    if not GA_MP_SECRET:
+        return
+    try:
+        parts = (_get_cookie(event, '_ga') or '').split('.')
+        if len(parts) >= 4 and parts[-2] and parts[-1]:
+            client_id = parts[-2] + '.' + parts[-1]
+        else:
+            client_id = f"{random.randint(1, 2**31 - 1)}.{int(time.time())}"
+        body = json.dumps({
+            "client_id": client_id,
+            "events": [{"name": name,
+                        "params": {"method": "Cognito", "engagement_time_msec": 1}}],
+        }).encode()
+        url = ("https://www.google-analytics.com/mp/collect?measurement_id="
+               + GA_MEASUREMENT_ID + "&api_secret="
+               + urllib.parse.quote(GA_MP_SECRET, safe=''))
+        req = urllib.request.Request(url, data=body, method='POST',
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            resp.read()
+    except Exception as e:
+        logger.warning(f"GA4 MP send failed (non-fatal): {e}")
 
 
 def _exchange_code_for_email(code):
@@ -1423,8 +1476,13 @@ def lambda_handler(event, context):
             return {'statusCode': 500,
                     'headers': {'Content-Type': 'text/plain; charset=utf-8'},
                     'body': f'Backfill error: {e}'}
+        _bf_key = (query_params.get('admin_key')
+                   if _is_admin_key(query_params.get('admin_key')) else ADMIN_KEY)
+        _bf_href = ('?view=sitemap-backfill&admin_key='
+                    + urllib.parse.quote(_bf_key, safe=''))
         _bf_tail = ('<p>Backfill complete.</p>' if _bf_done
-                    else '<p><a href="?view=sitemap-backfill">Continue &rarr;</a></p>')
+                    else '<p><a href="' + html_mod.escape(_bf_href)
+                    + '">Continue &rarr;</a></p>')
         return {'statusCode': 200,
                 'headers': {'Content-Type': 'text/html; charset=utf-8'},
                 'body': ('<!doctype html><html><body><p>Added ' + str(_bf_added)
@@ -1604,6 +1662,13 @@ def lambda_handler(event, context):
                 logger.info("Identity captured for Cognito login")
         except Exception as e:
             logger.warning(f"Identity capture failed (non-fatal): {e}")
+
+        # Server-side GA4 login/sign_up, before any redirect so every
+        # landing destination counts.
+        if email:
+            _ga_name = 'sign_up' if _cognito_is_new_user(email) else 'login'
+            logger.info("GA4 auth event: %s", _ga_name)
+            _ga_send_event(event, _ga_name)
 
         # Optional post-login bounce: `state` carries a base64url-encoded destination
         # URL (minted by a caller like CRMDealDetails) that wants the viewer sent
@@ -1793,9 +1858,8 @@ def lambda_handler(event, context):
             } catch (e) {}
           })();
         </script>"""
-        ga_auth_event_js = """<script>
-          gtag('event', 'login', { method: 'Cognito' });
-        </script>"""
+        # login/sign_up is now sent server-side from the ?code= branch.
+        ga_auth_event_js = ''
     else:
         ga_auth_strip_js = ''
         ga_auth_event_js = ''
