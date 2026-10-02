@@ -975,6 +975,19 @@ def _render_top_nav(event, is_admin=False, active=None):
         logger.warning(f"My Dashboard nav tab failed (non-fatal): {e}")
         dashboard_tab = ""
 
+    # Add order: auth-aware link to the desk's New Order page, same handoff
+    # pattern as the desk tabs above. Never carries the admin key.
+    add_order_dest = DESK_URL + "/update/?action=new"
+    if email:
+        ao_token = _make_handoff_token(email)
+        add_order_href = f"{add_order_dest}&sso={urllib.parse.quote(ao_token, safe='')}"
+    else:
+        add_order_href = _nav_login_url(add_order_dest)
+    add_order_html = (
+        f'<a href="{html_mod.escape(add_order_href, quote=True)}" class="nav-tab nav-addorder" '
+        'title="Post a buy or sell order">+ Add order</a>'
+    )
+
     if email:
         safe_email = html_mod.escape(email, quote=True)
         account_html = (
@@ -1018,6 +1031,7 @@ def _render_top_nav(event, is_admin=False, active=None):
         + dashboard_tab
         + '</div>'
         + deal_switcher_btn
+        + add_order_html
         + account_html
         + '</nav>'
     )
@@ -2123,6 +2137,9 @@ def lambda_handler(event, context):
                     flex-wrap: wrap;
                     min-width: auto;
                 }}
+            }}
+            .nav-addorder {{
+                flex-shrink: 0;
             }}
             .nav-tab:hover {{
                 background-color: #f0f0f0;
