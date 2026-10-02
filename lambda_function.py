@@ -995,7 +995,7 @@ def _render_top_nav(event, is_admin=False, active=None):
             '<span class="navacct-trigger">My Account &#9662;</span>'
             '<div class="navacct-menu">'
             f'<div class="navacct-item navacct-static">Signed in as {safe_email}</div>'
-            '<div class="navacct-item navacct-disabled" title="Coming soon">Profile &mdash; coming soon</div>'
+            '<a class="navacct-item" href="https://desk.graciagroup.com/?view=profile">Profile</a>'
             '<a class="navacct-item" href="https://trades.graciagroup.com/?signout=1">Sign out</a>'
             '</div></div>'
         )
