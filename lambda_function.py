@@ -1432,6 +1432,16 @@ def format_currency(value, include_cents=False):
             return f"${int(float_value):,}"
     except (ValueError, TypeError):
         return value
+def _price_or_none(value):
+    """Deal net/gross for display: None, '', 'None' and 0 all count as no price."""
+    if value is None or str(value).strip() in ('', 'None'):
+        return None
+    try:
+        return None if float(value) == 0 else value
+    except (ValueError, TypeError):
+        return value
+
+
 def calculate_valuation(price, company_lr_pps, company_lr_val):
     try:
         if not price or not company_lr_pps or not company_lr_val:
@@ -1561,7 +1571,7 @@ def lambda_handler(event, context):
                 'id': d.get('id'),
                 'company': d.get('company'),
                 'side': 'Sell' if (d.get('type') or '').strip() == 'Sell Order' else 'Buy',
-                'net': format_currency(d.get('net'), include_cents=True),
+                'net': format_currency(_price_or_none(d.get('net')), include_cents=True) if _price_or_none(d.get('net')) is not None else '',
                 'min_size': format_currency(d.get('min_deal_size')),
                 'max_size': format_currency(d.get('max_deal_size')),
             } for d in _pub_deals), key=lambda r: (r['company'] or '').lower())
@@ -1811,11 +1821,13 @@ def lambda_handler(event, context):
         layer_badge_html = f' <span class="layer-badge" title="{layers_val}">({layer_label})</span>' if layer_label else ''
         
         # Calculate valuations
-        net_valuation = calculate_valuation(deal['net'], deal['company_lr_pps'], deal['company_lr_val'])
-        gross_valuation = calculate_valuation(deal['gross'], deal['company_lr_pps'], deal['company_lr_val'])
-        net_display = format_currency(deal['net'], include_cents=True)
+        net_price = _price_or_none(deal['net'])
+        gross_price = _price_or_none(deal['gross'])
+        net_valuation = calculate_valuation(net_price, deal['company_lr_pps'], deal['company_lr_val'])
+        gross_valuation = calculate_valuation(gross_price, deal['company_lr_pps'], deal['company_lr_val'])
+        net_display = format_currency(net_price, include_cents=True) if net_price is not None else ''
         net_valuation_text = format_valuation(net_valuation).strip()  # Remove any extra whitespace
-        gross_display = format_currency(deal['gross'], include_cents=True)
+        gross_display = format_currency(gross_price, include_cents=True) if gross_price is not None else ''
         gross_valuation_text = format_valuation(gross_valuation).strip()
 
 
