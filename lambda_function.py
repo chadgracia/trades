@@ -515,7 +515,7 @@ a.pd-mail{
 .pd-role label:hover span{background:var(--tint)}
 .pd-role input:checked + span{border-color:var(--ledger);background:var(--ledger-soft);color:var(--ledger);font-weight:600}
 .pd-role input:focus-visible + span{outline:3px solid var(--ink);outline-offset:2px}
-.pd-thanks{border:1px solid var(--ledger);background:var(--ledger-soft);padding:1.2rem 1.25rem;margin-top:1.2rem}
+.pd-thanks{border:2px solid var(--ledger);background:var(--ledger-soft);padding:1.2rem 1.25rem;margin:1.2rem 0 1.5rem}
 .pd-result{margin-top:.8rem;font-weight:600;min-height:1.4em}
 .pd-result.ok{color:var(--ledger)}
 .pd-result.taken{color:#7A2E1D}
@@ -543,6 +543,7 @@ footer p{margin:0 0 .55rem}
     <div class="firm">Gracia Group</div>
     <div class="via">Chad Gracia · Registered Representative, Rainmaker Securities, LLC</div>
   </div>
+__PD_TOP__
 
   <h1>I stopped working with brokers and finders a few years ago. I'm opening the door again — for a few.</h1>
 
@@ -819,7 +820,7 @@ PARTNER_DESK_FORM = """  <form class="pd-form" method="post" action="?view=partn
   <button class="pd-btn" type="submit">Send my answer</button>
   </form>"""
 
-PARTNER_DESK_THANKS = """  <div class="pd-thanks"><p style="margin:0">Thank you — I've got your answer and will be in touch.</p></div>"""
+PARTNER_DESK_THANKS = """  <div class="pd-thanks"><p style="margin:0"><strong>Thank you — your answer was received.</strong> I'll be in touch shortly.</p></div>"""
 
 
 def _pd_handle_reply(event):
@@ -1473,7 +1474,7 @@ def lambda_handler(event, context):
         return {
             'statusCode': 200,
             'headers': {'Content-Type': 'text/html; charset=utf-8'},
-            'body': PARTNER_DESK_HTML.replace('__PD_FORM__', PARTNER_DESK_THANKS),
+            'body': PARTNER_DESK_HTML.replace('__PD_TOP__', PARTNER_DESK_THANKS).replace('__PD_FORM__', '  <p class="small">Answer received — see confirmation at the top of this page.</p>'),
         }
     if http_method == 'POST':
         return _json_response(405, {'error': 'Method not allowed'})
@@ -1620,7 +1621,7 @@ def lambda_handler(event, context):
         return {
             'statusCode': 200,
             'headers': {'Content-Type': 'text/html; charset=utf-8'},
-            'body': PARTNER_DESK_HTML.replace('__PD_FORM__', PARTNER_DESK_FORM.replace('__PD_EMAIL__', _pd_email)),
+            'body': PARTNER_DESK_HTML.replace('__PD_TOP__', '').replace('__PD_FORM__', PARTNER_DESK_FORM.replace('__PD_EMAIL__', _pd_email)),
         }
 
     # Admin: mint a Syndicate Dashboard magic link for any email, no login
