@@ -649,7 +649,7 @@ __PD_TOP__
   <ol class="steps">
     <li><strong>Check the name.</strong> The availability check runs entirely in your browser, before you've signed anything or told me anything. I never see the name you check. Details at the bottom of this page.</li>
     <li>Sign Rainmaker's standard agreement, countersigned by our president, listing the clients you'd like covered.</li>
-    <li>Introduce me to your client and I'll share the deal details with them (the deal terms should already be agreed). Once they confirm, I introduce you both to the counterparty. The clock starts when your client responds.</li>
+    <li><span class="cb-only">Introduce me to your client and I'll share the deal details with them (the deal terms should already be agreed). Once they confirm, I introduce you both to the counterparty. The clock starts when your client responds.</span><span class="ff-only">Introduce me to your client. Your client receives the fee disclosure to acknowledge. This is where your part ends: I share the deal details and handle everything from there. The clock starts when your client responds.</span></li>
     <li>Check your dashboard for the deal's status, your projected commission, and more.</li>
   </ol>
 
