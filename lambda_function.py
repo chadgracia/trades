@@ -603,7 +603,7 @@ __PD_TOP__
       <tr>
         <td>Follow-on trades</td>
         <td class="pick"><span class="num">50%</span> of the second trade, then <span class="num">33%</span> of every trade after — on any name in my book</td>
-        <td>None — the referral covers the first trade only</td>
+        <td>None — the referral covers one trade only; any additional trades would require a new Schedule A.</td>
       </tr>
       <tr>
         <td>Term</td>
@@ -617,7 +617,7 @@ __PD_TOP__
       <tr>
         <td>What counts</td>
         <td class="pick">Any trade initiated before the term ends — transfer notice, LOI, purchase agreement, or confirmed order — pays out even if it closes after.</td>
-        <td>Same, for the introduced trade.</td>
+        <td>Same, for the trade we cover in the agreement. I don't communicate with your client about any other trades, and if they reach out to me about a different name, I send them back to you.</td>
       </tr>
       <tr class="cb-only">
         <td>You're kept in</td>
@@ -647,11 +647,10 @@ __PD_TOP__
   <h2>How it works</h2>
 
   <ol class="steps">
-    <li><strong>Check the name.</strong> The availability check runs entirely in your browser — before you've signed or told me anything. Details at the bottom of this page.</li>
-    <li><span class="cb-only"><strong>Sign once.</strong> The master fee-sharing agreement — Rainmaker's form, countersigned by their president, naming no clients. This happens one time, ever.</span><span class="ff-only"><strong>Sign once.</strong> Rainmaker's finder agreement, confirming you're not required to register in the U.S. and that the arrangement is lawful where you are. This happens one time, ever.</span></li>
-    <li><strong>Register the client.</strong> A one-page schedule names your client, your track, and the dates. Signed electronically in minutes.</li>
-    <li><span class="cb-only"><strong>Make the introduction.</strong> A three-way email connects me, you, and your client, and states on its face that it's made under our agreement. When your client responds, the clock starts.</span><span class="ff-only"><strong>Make the introduction.</strong> A three-way email connects me, you, and your client. Your client receives the fee disclosure to acknowledge. This is where your part ends.</span></li>
-    <li><span class="cb-only"><strong>Get paid.</strong> Your client trades; your share wires when my commission does. You see every entry.</span><span class="ff-only"><strong>Get paid.</strong> Your client trades; your fee wires when my commission does, and you receive a statement.</span></li>
+    <li><strong>Check the name.</strong> The availability check runs entirely in your browser, before you've signed anything or told me anything. I never see the name you check. Details at the bottom of this page.</li>
+    <li>Sign Rainmaker's standard agreement, countersigned by our president, listing the clients you'd like covered.</li>
+    <li>Introduce me to your client and I'll share the deal details with them (the deal terms should already be agreed). Once they confirm, I introduce you both to the counterparty. The clock starts when your client responds.</li>
+    <li>Check your dashboard for the deal's status, your projected commission, and more.</li>
   </ol>
 
   <h2>Who this is for</h2>
