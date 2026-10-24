@@ -1222,6 +1222,54 @@ def _load_deals_from_s3():
     return json.loads(response['Body'].read().decode('utf-8'))
 
 
+# "Unconfirmed" badge: a deal whose Pipeline updated_at is older than this.
+# pipeline_deals.json rows carry no updated_at, so it is looked up by deal id
+# in the raw Pipeline snapshot full-pipeline-cache/deals.json. The Refresh
+# field (custom_label_3994687) is deliberately ignored.
+UNCONFIRMED_DAYS = 60
+# PHASE 1 GATE: only these deal ids can be badged. Remove this set (and the
+# membership check in _unconfirmed_since) to enable the badge for all deals.
+UNCONFIRMED_TEST_IDS = {51661498}
+_PIPELINE_UPDATED_CACHE = {'ts': 0.0, 'map': {}}
+
+
+def _load_pipeline_updated_at():
+    """{deal_id(str): updated_at datetime} from full-pipeline-cache/deals.json,
+    cached for 10 minutes. Never raises; {} on any failure (no badges)."""
+    now = time.time()
+    if _PIPELINE_UPDATED_CACHE['map'] and now - _PIPELINE_UPDATED_CACHE['ts'] < 600:
+        return _PIPELINE_UPDATED_CACHE['map']
+    out = {}
+    try:
+        obj = boto3.client('s3').get_object(Bucket='full-pipeline-cache', Key='deals.json')
+        raw = json.loads(obj['Body'].read().decode('utf-8'))
+        for d in (raw.get('deals') if isinstance(raw, dict) else raw) or []:
+            try:
+                out[str(d['id'])] = datetime.strptime(str(d.get('updated_at') or '').strip(),
+                                                      '%Y/%m/%d %H:%M:%S %z')
+            except (KeyError, TypeError, ValueError):
+                continue
+    except Exception as e:
+        logger.error(f"unconfirmed: could not load full-pipeline-cache/deals.json: {e}")
+        return _PIPELINE_UPDATED_CACHE['map']
+    _PIPELINE_UPDATED_CACHE['ts'] = now
+    _PIPELINE_UPDATED_CACHE['map'] = out
+    return out
+
+
+def _unconfirmed_since(deal_id, updated_map):
+    """updated_at datetime if the deal is Unconfirmed (older than UNCONFIRMED_DAYS), else None."""
+    try:
+        if int(deal_id) not in UNCONFIRMED_TEST_IDS:  # Phase 1 gate
+            return None
+    except (TypeError, ValueError):
+        return None
+    updated = updated_map.get(str(deal_id))
+    if updated and (datetime.now(timezone.utc) - updated).days > UNCONFIRMED_DAYS:
+        return updated
+    return None
+
+
 SERVED_DEALS_BUCKET = "full-pipeline-cache"
 SERVED_DEALS_KEY = "served-deals.json"
 SITEMAP_DEAL_TYPE_IDS = {5011675, 5077819}  # Sell Order, Buy Order
@@ -1801,6 +1849,8 @@ def lambda_handler(event, context):
     _admin_param_ok = _is_admin_key(query_params.get('admin_key'))
     _is_admin = _admin_param_ok or _is_admin_key(_get_cookie(event, 'admin_key'))
 
+    _updated_map = _load_pipeline_updated_at()
+
     table_rows = ""
     for deal in deals:
         stage_tooltips = {
@@ -1812,6 +1862,10 @@ def lambda_handler(event, context):
         stage_html = f'<span class="stage-cell" data-tooltip="{stage_tooltips[deal["stage"]]}">{{deal["stage"]}}</span>'
         
         company_cell = deal['company']
+        _unconf = _unconfirmed_since(deal['id'], _updated_map)
+        if _unconf:
+            _unconf_date = _unconf.strftime('%b %-d, %Y')
+            company_cell += f' <span class="unconfirmed-pill" title="Last confirmed {_unconf_date}">Unconfirmed</span>'
 
         # Layer annotation folded into the Structure column, e.g. "Fund (2L)".
         # Shown for any deal (buy or sell) that carries a recognized layers value;
@@ -1836,7 +1890,7 @@ def lambda_handler(event, context):
         admin_links = (f'''<br class="nudge-br" style="display:none;"><a class="nudge-bell" data-deal-id="{deal['id']}" style="display:none;margin-top:4px;text-decoration:none;" href="https://ak5zolfpynhrimrsuw5rbjchwu0ktexz.lambda-url.us-east-1.on.aws/?deal_id={deal['id']}&key={NUDGE_KEY}" target="_blank" rel="noopener" title="Nudge client to update or cancel" onclick="if(!confirm('Send an update request to this client?'))return false;localStorage.setItem('nudge_'+this.getAttribute('data-deal-id'),Date.now());this.style.display='none';var br=this.previousElementSibling;if(br&&br.tagName==='BR')br.style.display='none';return true;">🔔</a><a class="loi-send" data-deal-id="{deal['id']}" style="display:none;margin-left:7px;text-decoration:none;" href="{LOI_SEND_URL}?send=1&deal_id={deal['id']}&key={LOI_PAGE_KEY}" target="_blank" rel="noopener" title="Email this client a Letter of Intent link" onclick="if(!confirm('Email an LOI link to this client?'))return false;localStorage.setItem('loi_'+this.getAttribute('data-deal-id'),Date.now());this.style.display='none';return true;">✍️</a>''' if _is_admin else "")
 
         table_rows += f"""
-        <tr class="deal-row {deal['type'].lower()} {deal['structure_class']}" data-deal-id="{deal['id']}" data-management-fee="{deal['management_fee']}" data-carry="{deal['carry']}" data-stage="{deal['stage']}" data-data-room="{deal['data_room']}" data-highlighted="{deal['highlighted']}" data-layers="{deal.get('layers') or ''}">
+        <tr class="deal-row {deal['type'].lower()} {deal['structure_class']}" data-deal-id="{deal['id']}" data-management-fee="{deal['management_fee']}" data-carry="{deal['carry']}" data-stage="{deal['stage']}" data-data-room="{deal['data_room']}" data-highlighted="{deal['highlighted']}" data-layers="{deal.get('layers') or ''}" data-company="{deal['company']}" data-unconfirmed="{'Yes' if _unconf else 'No'}">
             <td><a href="https://trades.graciagroup.com/deal/{deal['id']}">{deal['id']}</a><br><button type="button" class="copy-id" data-copy-id="{deal['id']}" title="Copy deal ID" aria-label="Copy deal ID {deal['id']}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"></path></svg></button></td>
             <td>{deal['type']}</td>
             <td>{company_cell}</td>
@@ -1975,6 +2029,19 @@ def lambda_handler(event, context):
             }}
             .sub-filter.disabled {{
                 opacity: 0.45;
+            }}
+            .unconfirmed-pill {{
+                display: inline-block;
+                margin-left: 6px;
+                padding: 1px 7px;
+                border-radius: 999px;
+                background: #e5e7eb;
+                color: #4b5563;
+                font-size: 11px;
+                font-weight: 600;
+                white-space: nowrap;
+                vertical-align: middle;
+                cursor: help;
             }}
             .layer-badge {{
                 color: #6b7280;
@@ -2707,6 +2774,7 @@ def lambda_handler(event, context):
                 var carryChecked = document.getElementById('carryFilter').checked;
                 var dataRoomChecked = document.getElementById('dataRoomFilter').checked;
                 var highlightedChecked = document.getElementById('highlightedFilter').checked;
+                var unconfirmedChecked = document.getElementById('unconfirmedFilter').checked;
                 var multiLayerOk = document.getElementById('multiLayerFilter').checked;
                 document.getElementById('multiLayerFilter').disabled = !spvChecked;
                 document.getElementById('multiLayerWrap').classList.toggle('disabled', !spvChecked);
@@ -2728,7 +2796,7 @@ def lambda_handler(event, context):
                 for (var i = 0; i < rows.length; i++) {{
                     var row = rows[i];
                     var type = row.classList.contains('buy') ? 'buy' : 'sell';
-                    var company = row.cells[2].innerText;
+                    var company = row.getAttribute('data-company');
                     var isDirect = row.classList.contains('direct');
                     var isSPV = row.classList.contains('fund');
                     var isForward = row.classList.contains('forward');
@@ -2746,7 +2814,7 @@ def lambda_handler(event, context):
                     var showType = (buyChecked && type === 'buy') || (sellChecked && type === 'sell');
                     var showStructure = (directChecked && isDirect) || (spvChecked && isSPV) || (forwardChecked && isForward);
                     var showFees = (managementFeeChecked || managementFee === 0) && (carryChecked || carry === 0);
-                    var showUnconfirmed = true;  // unconfirmed orders always shown (auto-updated)
+                    var showUnconfirmed = unconfirmedChecked || row.getAttribute('data-unconfirmed') !== 'Yes';
                     
                     var dealMin = parseFloat(row.cells[6].innerText.replace(/[^0-9.-]+/g,'')) || 0;
                     var dealMax = parseFloat(row.cells[7].innerText.replace(/[^0-9.-]+/g,''));
@@ -3093,6 +3161,10 @@ def lambda_handler(event, context):
                     <div class="spacer"></div>
                     <div class="bottom-filter-group">
                         <label class="checkbox-label"><input type="checkbox" id="highlightedFilter" onchange="filterTable()"> Highlighted Deals</label>
+                    </div>
+                    <div class="spacer"></div>
+                    <div class="bottom-filter-group">
+                        <label class="checkbox-label"><input type="checkbox" id="unconfirmedFilter" checked onchange="filterTable()"> Show unconfirmed</label>
                     </div>
                 </div>
             </div>
