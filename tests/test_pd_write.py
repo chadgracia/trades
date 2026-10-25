@@ -30,8 +30,10 @@ class FakeS3:
     def __init__(self, objects=None):
         self.objects = dict(objects or {})
         self.puts = []
+        self.gets = []
 
     def get_object(self, Bucket, Key):
+        self.gets.append(Key)
         if (Bucket, Key) not in self.objects:
             raise NoSuchKey(Key)
         return {"Body": io.BytesIO(self.objects[(Bucket, Key)])}
@@ -83,10 +85,17 @@ def access_doc(people=None):
 
 
 class Base(unittest.TestCase):
-    def run_with(self, pipeline, s3=None, snapshot=None):
+    def setUp(self):
+        lf._PD_ACCESS_EMAIL_CACHE.update(ts=0.0, index={})
+
+    def tearDown(self):
+        for s3 in getattr(self, "_s3s", []):
+            self.assertNotIn("people.json", s3.gets)
+
+    def run_with(self, pipeline, s3=None):
         s3 = s3 or FakeS3({(B, "partner-desk/access.json"): access_doc()})
-        if snapshot is not None:
-            s3.objects[(B, "people.json")] = json.dumps({"people": snapshot}).encode()
+        s3.objects[(B, "people.json")] = b'{"people": []}'  # must never be read
+        self._s3s = getattr(self, "_s3s", []) + [s3]
         ses = FakeSES()
         return s3, ses, mock.patch.multiple(
             lf, _pd_api=pipeline,
@@ -140,20 +149,40 @@ class WriteResponse(Base):
         self.assertEqual((pl.puts, s3.puts), ([], []))
         self.assertEqual(line, "Pipeline: skipped: no unique match (0 found)")
 
-    def test_multiple_match_including_secondary_slots(self):
-        pl = FakePipeline({1: person(1, email="dup@x.com"), 2: person(2, email="other@x.com", home_email="Dup@x.com")})
-        s3, ses, patch = self.run_with(pl, snapshot=list(pl.people.values()))
+    def test_multiple_match_live_plus_access(self):
+        pl = FakePipeline({1: person(1, email="dup@x.com"), 2: person(2, email="other@x.com")})
+        s3, ses, patch = self.run_with(pl, FakeS3({(B, "partner-desk/access.json"): access_doc(
+            {"2": {"tt": None, "pd": None, "intermediary": True, "buying": [], "emails": ["other@x.com", "dup@x.com"]}})}))
         with patch:
             line = lf._pd_write_response("dup@x.com", "Neither")
         self.assertEqual((pl.puts, s3.puts), ([], []))
         self.assertEqual(line, "Pipeline: skipped: no unique match (2 found)")
 
-    def test_secondary_slot_single_match_writes(self):
+    def test_access_json_email_match_writes(self):
+        # Live search only sees the primary email; access.json knows the secondary one.
         pl = FakePipeline({2: person(2, email="other@x.com", email2="alt@x.com")})
-        s3, ses, patch = self.run_with(pl, snapshot=list(pl.people.values()))
+        s3, ses, patch = self.run_with(pl, FakeS3({(B, "partner-desk/access.json"): access_doc(
+            {"2": {"tt": 6577160, "pd": None, "intermediary": True, "buying": [], "emails": ["other@x.com", "ALT@x.com "]}})}))
         with patch:
             lf._pd_write_response("alt@x.com", "Neither")
         self.assertEqual(pl.puts, [(2, {"person": {"custom_fields": {PD: 7218524}}})])
+
+    def test_union_dedupes_same_id(self):
+        pl = FakePipeline({1: person(1, email="a@x.com")})
+        s3, ses, patch = self.run_with(pl, FakeS3({(B, "partner-desk/access.json"): access_doc(
+            {"1": {"tt": None, "pd": None, "intermediary": True, "buying": [], "emails": ["a@x.com"]}})}))
+        with patch:
+            self.assertEqual(lf._pd_match_ids("a@x.com"), [1])
+            line = lf._pd_write_response("a@x.com", "Neither")
+        self.assertTrue(line.startswith("Pipeline: wrote"), line)
+
+    def test_access_index_cached(self):
+        pl = FakePipeline({})
+        s3, ses, patch = self.run_with(pl)
+        with patch:
+            lf._pd_match_ids("a@x.com")
+            lf._pd_match_ids("b@x.com")
+        self.assertEqual(s3.gets.count("partner-desk/access.json"), 1)
 
 
 class ReplyHandler(Base):
@@ -240,6 +269,31 @@ class Backfill(Base):
         self.assertIn("skipped: no unique match (0 found)", b)
         self.assertNotIn("no-at-sign", b)
         self.assertIn("4 unique emails", b)
+
+    def test_time_budget(self):
+        import threading
+        pl, s3 = self._setup()
+        gate = threading.Event()
+        real = pl.__call__
+
+        def slow(method, path, payload=None):
+            if "e%40x.com" in path or "e@x.com" in path:
+                gate.wait(5)
+            return real(method, path, payload)
+
+        _, ses, patch = self.run_with(slow, s3)
+        with patch, mock.patch.object(lf, "ADMIN_KEY", "adm"), \
+                mock.patch.object(lf, "PD_BACKFILL_BUDGET_SECS", 0.3):
+            t0 = lf.time.time()
+            res = lf.lambda_handler({"queryStringParameters": {"view": "pd-backfill", "key": "adm", "apply": "1"},
+                                     "requestContext": {"http": {"method": "GET"}}}, None)
+            elapsed = lf.time.time() - t0
+        gate.set()
+        self.assertLess(elapsed, 2)
+        b = res["body"]
+        self.assertIn("<td>e@x.com</td><td>E</td><td>Referral track</td><td></td><td></td>"
+                      "<td>not processed — reload to continue</td>", b)
+        self.assertIn("wrote Not interested (7218524) → Partner – Interested (7218527)", b)
 
     def test_apply_writes_only_writable(self):
         pl, s3 = self._setup()

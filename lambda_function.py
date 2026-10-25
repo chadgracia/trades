@@ -931,26 +931,42 @@ def _pd_cf_option(person, key):
         return None
 
 
-def _pd_load_people_snapshot():
-    """People from full-pipeline-cache/people.json (covers email2/home_email slots)."""
+PD_ACCESS_CACHE_SECS = 15 * 60
+_PD_ACCESS_EMAIL_CACHE = {'ts': 0.0, 'index': {}}
+
+
+def _pd_access_email_index():
+    """{email: {person ids}} from the small partner-desk/access.json, cached 15 min.
+    Never reads people.json (too large for this Lambda). Unreadable → {} (not cached)."""
+    now = time.time()
+    if _PD_ACCESS_EMAIL_CACHE['ts'] and now - _PD_ACCESS_EMAIL_CACHE['ts'] < PD_ACCESS_CACHE_SECS:
+        return _PD_ACCESS_EMAIL_CACHE['index']
     try:
-        obj = boto3.client('s3').get_object(Bucket=AUCTIONS_BUCKET, Key='people.json')
-        return json.loads(obj['Body'].read()).get('people') or []
+        obj = boto3.client('s3').get_object(Bucket=AUCTIONS_BUCKET, Key=PD_ACCESS_KEY)
+        people = json.loads(obj['Body'].read()).get('people') or {}
     except Exception as e:
-        logger.warning(f"partner-desk people.json snapshot unavailable: {e}")
-        return []
+        logger.warning(f"partner-desk access.json unavailable for lookup: {e}")
+        return {}
+    index = {}
+    for pid, entry in people.items():
+        if not str(pid).isdigit() or not isinstance(entry, dict):
+            continue
+        for em in entry.get('emails') or []:
+            em = str(em).strip().lower()
+            if em:
+                index.setdefault(em, set()).add(int(pid))
+    _PD_ACCESS_EMAIL_CACHE.update(ts=now, index=index)
+    return index
 
 
-def _pd_match_ids(email, snapshot):
-    """Pipeline person ids whose ANY email field equals email (live search + snapshot)."""
+def _pd_match_ids(email):
+    """Pipeline person ids for email: live conditions[email] search ∪ access.json emails."""
     ids = set()
     data = _pd_api('GET', '/people.json?conditions[email]=' + urllib.parse.quote(email) + '&per_page=10')
     for p in (data.get('entries') or []):
         if p.get('id') is not None and email in _pd_person_emails(p):
             ids.add(int(p['id']))
-    for p in snapshot or []:
-        if p.get('id') is not None and email in _pd_person_emails(p):
-            ids.add(int(p['id']))
+    ids |= _pd_access_email_index().get(email, set())
     return sorted(ids)
 
 
@@ -972,7 +988,7 @@ def _pd_access_set(s3, pid, pd, email):
                   ContentType='application/json')
 
 
-def _pd_plan_response(email, option, snapshot=None, apply=False):
+def _pd_plan_response(email, option, apply=False):
     """Lookup + WRITABLE rule for one reply. Returns a row dict; never raises."""
     email = (email or '').strip().lower()
     row = {'email': email, 'option': option, 'pid': None, 'name': '', 'current': None,
@@ -981,7 +997,7 @@ def _pd_plan_response(email, option, snapshot=None, apply=False):
         if row['target'] is None:
             row['action'] = f"skipped: unknown option {option!r}"
             return row
-        ids = _pd_match_ids(email, _pd_load_people_snapshot() if snapshot is None else snapshot)
+        ids = _pd_match_ids(email)
         if len(ids) != 1:
             row['action'] = f"skipped: no unique match ({len(ids)} found)"
             return row
@@ -1022,7 +1038,7 @@ def _pd_write_response(email, option):
     ex = None
     try:
         ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        fut = ex.submit(_pd_plan_response, email, option, None, True)
+        fut = ex.submit(_pd_plan_response, email, option, True)
         return 'Pipeline: ' + fut.result(timeout=PD_WRITE_BUDGET_SECS)['action']
     except concurrent.futures.TimeoutError:
         logger.error(f"partner-desk Pipeline write timed out email={email}")
@@ -1034,7 +1050,13 @@ def _pd_write_response(email, option):
             ex.shutdown(wait=False)
 
 
+PD_BACKFILL_BUDGET_SECS = 20
+PD_BACKFILL_WORKERS = 6
+
+
 def _pd_backfill_page(apply):
+    import concurrent.futures
+    deadline = time.time() + PD_BACKFILL_BUDGET_SECS
     try:
         obj = boto3.client('s3').get_object(Bucket=AUCTIONS_BUCKET, Key=PD_REPLIES_KEY)
         replies = json.loads(obj['Body'].read().decode('utf-8'))
@@ -1049,9 +1071,20 @@ def _pd_backfill_page(apply):
             continue
         if em not in latest or str(r.get('ts') or '') >= str(latest[em].get('ts') or ''):
             latest[em] = r
-    snapshot = _pd_load_people_snapshot() if latest else []
-    rows = [_pd_plan_response(em, latest[em].get('option', ''), snapshot, apply)
-            for em in sorted(latest)]
+    emails = sorted(latest)
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=PD_BACKFILL_WORKERS)
+    futs = {em: ex.submit(_pd_plan_response, em, latest[em].get('option', ''), apply) for em in emails}
+    concurrent.futures.wait(list(futs.values()), timeout=max(0.0, deadline - time.time()))
+    ex.shutdown(wait=False, cancel_futures=True)
+    rows = []
+    for em in emails:
+        f = futs[em]
+        if f.done() and not f.cancelled():
+            rows.append(f.result())
+        else:
+            rows.append({'email': em, 'option': latest[em].get('option', ''), 'pid': None, 'name': '',
+                         'current': None, 'target': None, 'action': 'not processed — reload to continue',
+                         'wrote': False})
     esc = html_mod.escape
     trs = ''.join(
         '<tr>' + ''.join(f'<td>{esc(str(v))}</td>' for v in (
