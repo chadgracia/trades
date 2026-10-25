@@ -864,9 +864,11 @@ def _pd_handle_reply(event):
                       ContentType='application/json')
     except Exception as e:
         logger.error(f"partner-desk reply S3 write failed: {e}")
+    pipeline_line = _pd_write_response(reply['email'], reply['option'])
     try:
         text = '\n'.join(f"{k}: {reply[k]}" for k in
                          ('name', 'email', 'firm', 'role', 'crd', 'country', 'option', 'comment', 'b', 'ts', 'ip', 'user_agent'))
+        text += '\n' + pipeline_line
         msg = {'Source': PD_REPLY_FROM,
                'Destination': {'ToAddresses': [PD_REPLY_TO]},
                'Message': {'Subject': {'Data': f"Partner Desk reply: {reply['name'] or '(no name)'} — {reply['option'] or '(no option)'} ({'Foreign finder' if reply['role'] == 'ff' else 'Co-broker'})"},
@@ -876,6 +878,199 @@ def _pd_handle_reply(event):
         boto3.client('ses', region_name='us-east-1').send_email(**msg)
     except Exception as e:
         logger.error(f"partner-desk reply SES send failed: {e}")
+
+
+CF_PD_RESPONSE = 'custom_label_4011837'
+PD_OPTION_MAP = {'Partner track': 7218527, 'Referral track': 7218525, 'Neither': 7218524}
+PD_WRITABLE = {None, 7218524, 7218525, 7218527}  # never touch 7218523, 7218526, 7218528, 7218570, 7218529
+PD_RESPONSE_LABELS = {
+    7218523: 'Investor', 7218524: 'Not interested', 7218525: 'Referral – Interested',
+    7218526: 'Referral – Registered', 7218527: 'Partner – Interested', 7218528: 'Partner – Registered',
+    7218570: 'Referral – Client', 7218529: 'Revoked',
+}
+PD_ACCESS_KEY = 'partner-desk/access.json'
+
+
+def _pd_label(v):
+    return '(empty)' if v is None else f"{PD_RESPONSE_LABELS.get(v, v)} ({v})"
+
+
+def _pd_api(method, path, payload=None):
+    """Pipeline API v3 call with this file's query-string auth. Returns parsed JSON."""
+    url = ("https://api.pipelinecrm.com/api/v3" + path
+           + ('&' if '?' in path else '?') + _pipeline_auth_qs().lstrip('&'))
+    data = json.dumps(payload).encode('utf-8') if payload is not None else None
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={'Accept': 'application/json', 'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode() or '{}')
+
+
+def _pd_person_emails(p):
+    out = set()
+    for k, v in (p or {}).items():
+        if 'email' not in str(k).lower():
+            continue
+        for item in (v if isinstance(v, list) else [v]):
+            if isinstance(item, dict):
+                item = item.get('address') or item.get('email') or item.get('value')
+            if isinstance(item, str) and item.strip():
+                out.add(item.strip().lower())
+    return out
+
+
+def _pd_cf_option(person, key):
+    v = ((person or {}).get('custom_fields') or {}).get(key)
+    if isinstance(v, list):
+        v = v[0] if v else None
+    if isinstance(v, dict):
+        v = v.get('option_id') or v.get('id') or v.get('value')
+    try:
+        return int(v) if v not in (None, '') else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _pd_load_people_snapshot():
+    """People from full-pipeline-cache/people.json (covers email2/home_email slots)."""
+    try:
+        obj = boto3.client('s3').get_object(Bucket=AUCTIONS_BUCKET, Key='people.json')
+        return json.loads(obj['Body'].read()).get('people') or []
+    except Exception as e:
+        logger.warning(f"partner-desk people.json snapshot unavailable: {e}")
+        return []
+
+
+def _pd_match_ids(email, snapshot):
+    """Pipeline person ids whose ANY email field equals email (live search + snapshot)."""
+    ids = set()
+    data = _pd_api('GET', '/people.json?conditions[email]=' + urllib.parse.quote(email) + '&per_page=10')
+    for p in (data.get('entries') or []):
+        if p.get('id') is not None and email in _pd_person_emails(p):
+            ids.add(int(p['id']))
+    for p in snapshot or []:
+        if p.get('id') is not None and email in _pd_person_emails(p):
+            ids.add(int(p['id']))
+    return sorted(ids)
+
+
+def _pd_access_set(s3, pid, pd, email):
+    try:
+        obj = s3.get_object(Bucket=AUCTIONS_BUCKET, Key=PD_ACCESS_KEY)
+        doc = json.loads(obj['Body'].read())
+    except Exception as e:
+        logger.error(f"partner-desk access.json read failed; not updating: {e}")
+        return
+    people = doc.setdefault('people', {})
+    entry = people.get(str(pid))
+    if entry is None:
+        people[str(pid)] = {'tt': None, 'pd': pd, 'intermediary': False, 'buying': [], 'emails': [email]}
+    else:
+        entry['pd'] = pd
+    s3.put_object(Bucket=AUCTIONS_BUCKET, Key=PD_ACCESS_KEY,
+                  Body=json.dumps(doc, ensure_ascii=False).encode('utf-8'),
+                  ContentType='application/json')
+
+
+def _pd_plan_response(email, option, snapshot=None, apply=False):
+    """Lookup + WRITABLE rule for one reply. Returns a row dict; never raises."""
+    email = (email or '').strip().lower()
+    row = {'email': email, 'option': option, 'pid': None, 'name': '', 'current': None,
+           'target': PD_OPTION_MAP.get(option), 'action': '', 'wrote': False}
+    try:
+        if row['target'] is None:
+            row['action'] = f"skipped: unknown option {option!r}"
+            return row
+        ids = _pd_match_ids(email, _pd_load_people_snapshot() if snapshot is None else snapshot)
+        if len(ids) != 1:
+            row['action'] = f"skipped: no unique match ({len(ids)} found)"
+            return row
+        pid = row['pid'] = ids[0]
+        person = _pd_api('GET', f'/people/{pid}.json')
+        row['name'] = ' '.join(x for x in (person.get('first_name'), person.get('last_name')) if x)
+        cur = row['current'] = _pd_cf_option(person, CF_PD_RESPONSE)
+        if cur not in PD_WRITABLE:
+            row['action'] = f"skipped: protected value {_pd_label(cur)}"
+            return row
+        if cur == row['target']:
+            row['action'] = f"skipped: already {_pd_label(cur)}"
+            return row
+        if not apply:
+            row['action'] = f"would write {_pd_label(cur)} → {_pd_label(row['target'])}"
+            return row
+        _pd_api('PUT', f'/people/{pid}.json', {'person': {'custom_fields': {CF_PD_RESPONSE: row['target']}}})
+        row['wrote'] = True
+        row['action'] = f"wrote {_pd_label(cur)} → {_pd_label(row['target'])}"
+        try:
+            _pd_access_set(boto3.client('s3'), pid, row['target'], email)
+        except Exception as e:
+            logger.error(f"partner-desk access.json update failed pid={pid}: {e}")
+    except Exception as e:
+        logger.error(f"partner-desk Pipeline write failed email={email}: {e}")
+        row['action'] = f"error: {type(e).__name__}: {e}"
+    return row
+
+
+PD_WRITE_BUDGET_SECS = 12
+
+
+def _pd_write_response(email, option):
+    """Write the reply's option to Partner Desk Response when allowed. Returns the
+    'Pipeline: ...' status line for the reply email. Never raises, and gives up
+    waiting after PD_WRITE_BUDGET_SECS so the email and thank-you still go out."""
+    import concurrent.futures
+    ex = None
+    try:
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        fut = ex.submit(_pd_plan_response, email, option, None, True)
+        return 'Pipeline: ' + fut.result(timeout=PD_WRITE_BUDGET_SECS)['action']
+    except concurrent.futures.TimeoutError:
+        logger.error(f"partner-desk Pipeline write timed out email={email}")
+        return f"Pipeline: timed out after {PD_WRITE_BUDGET_SECS}s — check this person manually"
+    except Exception as e:
+        return f"Pipeline: error: {e}"
+    finally:
+        if ex is not None:
+            ex.shutdown(wait=False)
+
+
+def _pd_backfill_page(apply):
+    try:
+        obj = boto3.client('s3').get_object(Bucket=AUCTIONS_BUCKET, Key=PD_REPLIES_KEY)
+        replies = json.loads(obj['Body'].read().decode('utf-8'))
+    except Exception as e:
+        replies, err = [], f"{type(e).__name__}: {e}"
+    else:
+        err = ''
+    latest = {}
+    for r in replies if isinstance(replies, list) else []:
+        em = str(r.get('email') or '').strip().lower()
+        if '@' not in em:
+            continue
+        if em not in latest or str(r.get('ts') or '') >= str(latest[em].get('ts') or ''):
+            latest[em] = r
+    snapshot = _pd_load_people_snapshot() if latest else []
+    rows = [_pd_plan_response(em, latest[em].get('option', ''), snapshot, apply)
+            for em in sorted(latest)]
+    esc = html_mod.escape
+    trs = ''.join(
+        '<tr>' + ''.join(f'<td>{esc(str(v))}</td>' for v in (
+            r['email'], latest[r['email']].get('name', ''), r['option'], r['pid'] or '',
+            _pd_label(r['current']) if r['pid'] else '', r['action'])) + '</tr>'
+        for r in rows)
+    n_write = sum(1 for r in rows if r['wrote'] or r['action'].startswith('would write'))
+    head = ('APPLIED — ' + str(sum(r['wrote'] for r in rows)) + ' written' if apply
+            else 'DRY RUN — nothing written; ' + str(n_write) + ' would be written. Add &amp;apply=1 to write.')
+    return {'statusCode': 200, 'headers': {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store'},
+            'body': ('<!doctype html><html><head><meta charset="utf-8"><title>Partner Desk backfill</title>'
+                     '<style>body{font-family:sans-serif;padding:24px}td,th{border:1px solid #ddd;padding:4px 8px;'
+                     'font-size:13px;text-align:left}table{border-collapse:collapse}</style></head><body>'
+                     f'<h1>Partner Desk backfill</h1><p>{head}</p>'
+                     + (f'<p style="color:#b91c1c">Replies file unreadable: {esc(err)}</p>' if err else '')
+                     + f'<p>{len(rows)} unique emails (latest reply each).</p>'
+                     '<table><tr><th>Email</th><th>Name</th><th>Option</th><th>Person ID</th>'
+                     '<th>Current value</th><th>' + ('Result' if apply else 'Planned action') + '</th></tr>'
+                     + trs + '</table></body></html>')}
 
 
 
@@ -1691,6 +1886,11 @@ def lambda_handler(event, context):
   </p>
   <p><a href="{_mf_link_safe}">{html_mod.escape(_mf_link)}</a></p>
 </body></html>'''}
+
+    if query_params.get('view') == 'pd-backfill':
+        if not _is_admin_key(query_params.get('key')):
+            return {'statusCode': 404, 'headers': {'Content-Type': 'text/plain; charset=utf-8'}, 'body': 'Not found'}
+        return _pd_backfill_page(query_params.get('apply') == '1')
 
     if query_params.get('view') == 'pd-analyze':
         if not _is_admin_key(query_params.get('key')):
