@@ -3045,7 +3045,9 @@ def lambda_handler(event, context):
                     var showBroker = true;  // 'Available for Brokers' filter removed
 
                     var showType = (buyChecked && type === 'buy') || (sellChecked && type === 'sell');
-                    var showStructure = (directChecked && isDirect) || (spvChecked && isSPV) || (forwardChecked && isForward);
+                    // Rows with no structure class are structure-agnostic and always pass this filter.
+                    var noStructure = !isDirect && !isSPV && !isForward;
+                    var showStructure = noStructure || (directChecked && isDirect) || (spvChecked && isSPV) || (forwardChecked && isForward);
                     var showFees = (managementFeeChecked || managementFee === 0) && (carryChecked || carry === 0);
                     var showUnconfirmed = unconfirmedChecked || row.getAttribute('data-unconfirmed') !== 'Yes';
                     
@@ -3084,6 +3086,7 @@ def lambda_handler(event, context):
                 var dlCompany = dlParams.get('company');
                 var dlSide = (dlParams.get('side') || '').toLowerCase();
                 var dlTouched = false;
+                var dlFiltered = false;
 
                 if (dlSide === 'bid' || dlSide === 'offer') {{
                     var dlBuyBox = document.getElementById('buyFilter');
@@ -3103,14 +3106,17 @@ def lambda_handler(event, context):
                             toggleNonHighlighted();
                         }}
                         if (selectedCompanies.indexOf(dlCompany) === -1) {{
-                            toggleCompanyFilter(dlCompany);
+                            toggleCompanyFilter(dlCompany);  // runs filterTable()
                             dlTouched = false;
+                            dlFiltered = true;
                         }}
                         dlBtn.scrollIntoView({{block: 'center', behavior: 'smooth'}});
                     }}
                 }}
 
-                if (dlTouched) {{
+                // Apply the default checkbox state once on load so the starting
+                // count matches what any later filter click shows.
+                if (!dlFiltered) {{
                     filterTable();
                     updateDealCount();
                 }}
