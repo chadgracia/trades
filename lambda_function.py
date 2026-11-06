@@ -1450,20 +1450,51 @@ def _load_deals_from_s3():
     return json.loads(response['Body'].read().decode('utf-8'))
 
 
-# "Unconfirmed" badge: a deal whose Pipeline updated_at is older than this.
-# pipeline_deals.json rows carry no updated_at, so it is looked up by deal id
-# in the raw Pipeline snapshot full-pipeline-cache/deals.json. The Refresh
-# field (custom_label_3994687) is deliberately ignored.
-UNCONFIRMED_DAYS = 60
-# PHASE 1 GATE: only these deal ids can be badged. Remove this set (and the
-# membership check in _unconfirmed_since) to enable the badge for all deals.
-UNCONFIRMED_TEST_IDS = {51661498}
+# "Unconfirmed" badge. pipeline_deals.json rows lack the needed fields, so
+# they are looked up by deal id in the raw Pipeline snapshot
+# full-pipeline-cache/deals.json. Threshold = REFRESH_FIELD days if set
+# (0 = never Unconfirmed), else 30 days for Seller Role "GP — syndicating new
+# allocation", else 60. Unconfirmed when LAST_CONFIRMED_FIELD is blank or older
+# than the threshold. Hold-stage deals and deals missing from deals.json are
+# never Unconfirmed.
+LAST_CONFIRMED_FIELD = "custom_label_4012491"   # YYYY/MM/DD
+REFRESH_FIELD = "custom_label_3994687"
+SELLER_ROLE_FIELD = "custom_label_3938748"
+SR_NEW_ALLOCATION_ID = 7020357
+HOLD_STAGE_ID = 2094373
 _PIPELINE_UPDATED_CACHE = {'ts': 0.0, 'map': {}}
 
 
+def _cf_scalar(cf, field):
+    v = (cf or {}).get(field)
+    if isinstance(v, list):
+        v = v[0] if v else None
+    return v
+
+
+def _cf_int(cf, field):
+    v = _cf_scalar(cf, field)
+    if v in (None, ''):
+        return None
+    try:
+        return int(float(str(v)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_confirmed_date(v):
+    """LAST_CONFIRMED_FIELD value (YYYY/MM/DD, also YYYY-MM-DD) -> aware UTC datetime, else None."""
+    s = str(v or '').strip()[:10].replace('-', '/')
+    try:
+        return datetime.strptime(s, '%Y/%m/%d').replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
 def _load_pipeline_updated_at():
-    """{deal_id(str): updated_at datetime} from full-pipeline-cache/deals.json,
-    cached for 10 minutes. Never raises; {} on any failure (no badges)."""
+    """{deal_id(str): {'stage_id', 'last_confirmed', 'refresh', 'seller_role'}}
+    from full-pipeline-cache/deals.json, cached for 10 minutes. Never raises;
+    {} on any failure (no badges)."""
     now = time.time()
     if _PIPELINE_UPDATED_CACHE['map'] and now - _PIPELINE_UPDATED_CACHE['ts'] < 600:
         return _PIPELINE_UPDATED_CACHE['map']
@@ -1473,9 +1504,15 @@ def _load_pipeline_updated_at():
         raw = json.loads(obj['Body'].read().decode('utf-8'))
         for d in (raw.get('deals') if isinstance(raw, dict) else raw) or []:
             try:
-                out[str(d['id'])] = datetime.strptime(str(d.get('updated_at') or '').strip(),
-                                                      '%Y/%m/%d %H:%M:%S %z')
-            except (KeyError, TypeError, ValueError):
+                cf = d.get('custom_fields') or {}
+                stage_id = (d.get('deal_stage') or {}).get('id') or d.get('deal_stage_id')
+                out[str(d['id'])] = {
+                    'stage_id': int(stage_id) if stage_id not in (None, '') else None,
+                    'last_confirmed': _parse_confirmed_date(_cf_scalar(cf, LAST_CONFIRMED_FIELD)),
+                    'refresh': _cf_int(cf, REFRESH_FIELD),
+                    'seller_role': _cf_int(cf, SELLER_ROLE_FIELD),
+                }
+            except (KeyError, TypeError, ValueError, AttributeError):
                 continue
     except Exception as e:
         logger.error(f"unconfirmed: could not load full-pipeline-cache/deals.json: {e}")
@@ -1486,15 +1523,22 @@ def _load_pipeline_updated_at():
 
 
 def _unconfirmed_since(deal_id, updated_map):
-    """updated_at datetime if the deal is Unconfirmed (older than UNCONFIRMED_DAYS), else None."""
-    try:
-        if int(deal_id) not in UNCONFIRMED_TEST_IDS:  # Phase 1 gate
-            return None
-    except (TypeError, ValueError):
+    """Tooltip text if the deal is Unconfirmed, else None."""
+    rec = updated_map.get(str(deal_id))
+    if not rec or rec.get('stage_id') == HOLD_STAGE_ID:
         return None
-    updated = updated_map.get(str(deal_id))
-    if updated and (datetime.now(timezone.utc) - updated).days > UNCONFIRMED_DAYS:
-        return updated
+    refresh = rec.get('refresh')
+    if refresh is not None:
+        if refresh <= 0:
+            return None
+        threshold = refresh
+    else:
+        threshold = 30 if rec.get('seller_role') == SR_NEW_ALLOCATION_ID else 60
+    last = rec.get('last_confirmed')
+    if last is None:
+        return 'Unconfirmed · not recently confirmed'
+    if (datetime.now(timezone.utc) - last).days > threshold:
+        return f"Unconfirmed · last confirmed {last.strftime('%b %-d, %Y')}"
     return None
 
 
@@ -2097,8 +2141,7 @@ def lambda_handler(event, context):
         company_cell = deal['company']
         _unconf = _unconfirmed_since(deal['id'], _updated_map)
         if _unconf:
-            _unconf_date = _unconf.strftime('%b %-d, %Y')
-            company_cell += f' <span class="unconfirmed-pill" title="Last confirmed {_unconf_date}">Unconfirmed</span>'
+            company_cell += f' <span class="unconfirmed-icon" title="{_unconf}">⏱</span>'
 
         # Layer annotation folded into the Structure column, e.g. "Fund (2L)".
         # Shown for any deal (buy or sell) that carries a recognized layers value;
@@ -2263,16 +2306,10 @@ def lambda_handler(event, context):
             .sub-filter.disabled {{
                 opacity: 0.45;
             }}
-            .unconfirmed-pill {{
-                display: inline-block;
-                margin-left: 6px;
-                padding: 1px 7px;
-                border-radius: 999px;
-                background: #e5e7eb;
-                color: #4b5563;
-                font-size: 11px;
-                font-weight: 600;
-                white-space: nowrap;
+            .unconfirmed-icon {{
+                margin-left: 4px;
+                color: #b45309;
+                font-size: 12px;
                 vertical-align: middle;
                 cursor: help;
             }}
