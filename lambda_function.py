@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import threading
 import base64
 import hmac
 import hashlib
@@ -212,10 +213,28 @@ _PD_HASH_CACHE = {'ts': 0.0, 'emails': '[]', 'domains': '[]'}
 PD_SEARCH_ID = 20538950  # "S: Partner Desk Check" — Whitelist-tagged clients
 
 
-def _pipeline_auth_qs():
-    """Pipeline CRM query-string auth, appended to an existing query string."""
-    return ("&api_key=ZRMHN4uJotjRDcZa8hKi"
-            + "&app_key=571978be28bd3b5b515a2cc5db96b674")
+_PIPELINE_JWT_CACHE = {'jwt': None, 'ts': 0.0}
+_PIPELINE_JWT_LOCK = threading.Lock()
+_PIPELINE_JWT_TTL = 600  # seconds; per warm container
+
+
+def _pipeline_jwt():
+    """Pipeline CRM JWT from s3://pipeline-token/pipeline-jwt.json,
+    cached per container for 10 minutes."""
+    with _PIPELINE_JWT_LOCK:
+        now = time.time()
+        if (_PIPELINE_JWT_CACHE['jwt']
+                and now - _PIPELINE_JWT_CACHE['ts'] < _PIPELINE_JWT_TTL):
+            return _PIPELINE_JWT_CACHE['jwt']
+        obj = boto3.client('s3').get_object(Bucket='pipeline-token', Key='pipeline-jwt.json')
+        jwt = json.loads(obj['Body'].read())['jwt']
+        _PIPELINE_JWT_CACHE.update(jwt=jwt, ts=now)
+        return jwt
+
+
+def _pipeline_auth_headers():
+    """Bearer-JWT auth header for Pipeline CRM API v3 requests."""
+    return {"Authorization": f"Bearer {_pipeline_jwt()}"}
 
 
 def _pd_fetch_search_page(page):
@@ -223,11 +242,15 @@ def _pd_fetch_search_page(page):
         "https://api.pipelinecrm.com/api/v3/searches/"
         + str(PD_SEARCH_ID)
         + "/perform.json?per_page=200&page=" + str(page)
-        + _pipeline_auth_qs()
     )
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        req = urllib.request.Request(
+            url, headers={"Accept": "application/json", **_pipeline_auth_headers()})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as e:
+        logger.error(f"PD search auth failed: {e}")
+        raise
 
 
 PD_FREEMAIL = {
@@ -896,12 +919,12 @@ def _pd_label(v):
 
 
 def _pd_api(method, path, payload=None):
-    """Pipeline API v3 call with this file's query-string auth. Returns parsed JSON."""
-    url = ("https://api.pipelinecrm.com/api/v3" + path
-           + ('&' if '?' in path else '?') + _pipeline_auth_qs().lstrip('&'))
+    """Pipeline API v3 call with Bearer-JWT auth. Returns parsed JSON."""
+    url = "https://api.pipelinecrm.com/api/v3" + path
     data = json.dumps(payload).encode('utf-8') if payload is not None else None
     req = urllib.request.Request(url, data=data, method=method,
-                                 headers={'Accept': 'application/json', 'Content-Type': 'application/json'})
+                                 headers={'Accept': 'application/json', 'Content-Type': 'application/json',
+                                          **_pipeline_auth_headers()})
     with urllib.request.urlopen(req, timeout=15) as resp:
         return json.loads(resp.read().decode() or '{}')
 
@@ -1632,9 +1655,10 @@ def _sitemap_backfill(restart=False):
             if time.time() - start > 20:
                 break
             url = ("https://api.pipelinecrm.com/api/v3/deals.json?per_page=200&page="
-                   + str(page) + _pipeline_auth_qs())
-            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+                   + str(page))
             try:
+                req = urllib.request.Request(
+                    url, headers={"Accept": "application/json", **_pipeline_auth_headers()})
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     payload = json.loads(resp.read().decode())
             except Exception as e:
