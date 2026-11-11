@@ -1477,15 +1477,22 @@ def _load_deals_from_s3():
 # they are looked up by deal id in the raw Pipeline snapshot
 # full-pipeline-cache/deals.json. Threshold = REFRESH_FIELD days if set
 # (0 = never Unconfirmed), else 30 days for Seller Role "GP — syndicating new
-# allocation", else 60. Unconfirmed when LAST_CONFIRMED_FIELD is blank or older
-# than the threshold. Hold-stage deals and deals missing from deals.json are
-# never Unconfirmed.
+# allocation", else 60. Effective date = newer of LAST_CONFIRMED_FIELD and the
+# UTC date of the deal's updated_at (any Pipeline edit counts as confirmation).
+# Restore exception: if the deal's latest stale-deal-scanner log entry
+# (full-pipeline-cache/obsolete-review/log.json) is "restored", updated_at
+# counts only when > 15 min after that entry's "at". Unconfirmed when there is
+# no effective date or it is older than the threshold. Hold-stage deals and
+# deals missing from deals.json are never Unconfirmed. Must stay identical to
+# CRMDealDetails unconfirmed_status().
 LAST_CONFIRMED_FIELD = "custom_label_4012491"   # YYYY/MM/DD
 REFRESH_FIELD = "custom_label_3994687"
 SELLER_ROLE_FIELD = "custom_label_3938748"
 SR_NEW_ALLOCATION_ID = 7020357
 HOLD_STAGE_ID = 2094373
 _PIPELINE_UPDATED_CACHE = {'ts': 0.0, 'map': {}}
+RESTORE_LOG_KEY = 'obsolete-review/log.json'   # written by stale-deal-scanner
+RESTORE_GRACE_MINUTES = 15
 
 
 def _cf_scalar(cf, field):
@@ -1514,16 +1521,63 @@ def _parse_confirmed_date(v):
         return None
 
 
+def _parse_updated_at(v):
+    """Pipeline updated_at ("YYYY/MM/DD HH:MM:SS +0000", also ISO) -> aware UTC datetime, else None."""
+    s = str(v or '').strip()
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s, '%Y/%m/%d %H:%M:%S %z').astimezone(timezone.utc)
+    except ValueError:
+        pass
+    return _parse_iso_utc(s)
+
+
+def _parse_iso_utc(v):
+    """ISO timestamp -> aware UTC datetime (naive treated as UTC), else None."""
+    try:
+        dt = datetime.fromisoformat(str(v).strip().replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_restore_log(s3):
+    """{deal_id(str): latest obsolete-review log entry}. Latest = newest "at";
+    on a tie or unreadable time, the one later in the list. Never raises;
+    missing/unreadable/malformed log -> {} (no restores)."""
+    by_deal, best = {}, {}
+    try:
+        obj = s3.get_object(Bucket='full-pipeline-cache', Key=RESTORE_LOG_KEY)
+        entries = json.loads(obj['Body'].read().decode('utf-8')).get('entries') or []
+        floor = datetime.min.replace(tzinfo=timezone.utc)
+        for i, e in enumerate(entries):
+            if not isinstance(e, dict) or e.get('deal_id') is None:
+                continue
+            did = str(e.get('deal_id')).strip()
+            key = (_parse_iso_utc(e.get('at')) or floor, i)
+            if did not in best or key >= best[did]:
+                best[did], by_deal[did] = key, e
+    except Exception as e:
+        logger.info(f"unconfirmed: restore log unavailable ({e!r})")
+        return {}
+    return by_deal
+
+
 def _load_pipeline_updated_at():
-    """{deal_id(str): {'stage_id', 'last_confirmed', 'refresh', 'seller_role'}}
-    from full-pipeline-cache/deals.json, cached for 10 minutes. Never raises;
+    """{deal_id(str): {'stage_id', 'last_confirmed', 'updated_at', 'refresh',
+    'seller_role', 'restore'}} from full-pipeline-cache/deals.json plus the
+    obsolete-review restore log, cached for 10 minutes. Never raises;
     {} on any failure (no badges)."""
     now = time.time()
     if _PIPELINE_UPDATED_CACHE['map'] and now - _PIPELINE_UPDATED_CACHE['ts'] < 600:
         return _PIPELINE_UPDATED_CACHE['map']
     out = {}
     try:
-        obj = boto3.client('s3').get_object(Bucket='full-pipeline-cache', Key='deals.json')
+        s3 = boto3.client('s3')
+        obj = s3.get_object(Bucket='full-pipeline-cache', Key='deals.json')
         raw = json.loads(obj['Body'].read().decode('utf-8'))
         for d in (raw.get('deals') if isinstance(raw, dict) else raw) or []:
             try:
@@ -1532,11 +1586,15 @@ def _load_pipeline_updated_at():
                 out[str(d['id'])] = {
                     'stage_id': int(stage_id) if stage_id not in (None, '') else None,
                     'last_confirmed': _parse_confirmed_date(_cf_scalar(cf, LAST_CONFIRMED_FIELD)),
+                    'updated_at': _parse_updated_at(d.get('updated_at')),
                     'refresh': _cf_int(cf, REFRESH_FIELD),
                     'seller_role': _cf_int(cf, SELLER_ROLE_FIELD),
                 }
             except (KeyError, TypeError, ValueError, AttributeError):
                 continue
+        restores = _load_restore_log(s3)
+        for did, rec in out.items():
+            rec['restore'] = restores.get(did)
     except Exception as e:
         logger.error(f"unconfirmed: could not load full-pipeline-cache/deals.json: {e}")
         return _PIPELINE_UPDATED_CACHE['map']
@@ -1557,11 +1615,19 @@ def _unconfirmed_since(deal_id, updated_map):
         threshold = refresh
     else:
         threshold = 30 if rec.get('seller_role') == SR_NEW_ALLOCATION_ID else 60
-    last = rec.get('last_confirmed')
-    if last is None:
+    confirmed = rec.get('last_confirmed')
+    updated = rec.get('updated_at')
+    entry = rec.get('restore')
+    if updated is not None and isinstance(entry, dict) and entry.get('action') == 'restored':
+        at = _parse_iso_utc(entry.get('at'))
+        if at is None or updated <= at + timedelta(minutes=RESTORE_GRACE_MINUTES):
+            updated = None   # the restore's own write is not a confirmation
+    dates = [d.date() for d in (confirmed, updated) if d is not None]
+    if not dates:
         return 'Unconfirmed · not recently confirmed'
-    if (datetime.now(timezone.utc) - last).days > threshold:
-        return f"Unconfirmed · last confirmed {last.strftime('%b %-d, %Y')}"
+    effective = max(dates)
+    if (datetime.now(timezone.utc).date() - effective).days > threshold:
+        return f"Unconfirmed · last confirmed {effective.strftime('%b %-d, %Y')}"
     return None
 
 
