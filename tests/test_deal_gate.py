@@ -299,7 +299,7 @@ class Links(unittest.TestCase):
             tok = lf.dg_make_token("101")
         r = run(lf, qp={"company": "Acme", "v": tok, "side": "offer"})
         self.assertEqual(r["statusCode"], 302)
-        self.assertEqual(r["headers"]["Location"], "/?company=Acme&side=offer")
+        self.assertEqual(r["headers"]["Location"], "https://trades.graciagroup.com/?company=Acme&side=offer")
         self.assertEqual(len(r["cookies"]), 1)
         self.assertTrue(r["cookies"][0].startswith("gg_view="))
         self.assertIn("HttpOnly", r["cookies"][0])
@@ -397,8 +397,13 @@ class LinkRequest(unittest.TestCase):
         self.assertEqual(m["ReplyToAddresses"], ["cgracia@rainmakersecurities.com"])
         self.assertEqual(m["Message"]["Subject"]["Data"], "Your link to Gracia Group offers")
         text = m["Message"]["Body"]["Text"]["Data"]
-        self.assertTrue(text.startswith("Hello Ann,\n\nHere is your link:\nhttps://trades.graciagroup.com/deal/9?x=1&v=101."))
-        self.assertTrue(text.endswith("It opens the page you were viewing.\n\nBest wishes,\nChad Gracia\n"))
+        self.assertTrue(text.startswith("Hello Ann,\n\nHere is your personal link to current offers:\n"
+                                        "https://trades.graciagroup.com/deal/9?x=1&v=101."))
+        self.assertTrue(text.endswith(
+            "\n\nIt opens the page you were viewing. Once you open it, offer terms on every deal page stay "
+            "visible on this device and browser for six months, so you won't need to do this again for "
+            "other deals. If you use another device, request a new link there.\n\n"
+            "Please don't forward this link; it is tied to you.\n\nBest wishes,\nChad Gracia\n"))
         self.assertNotIn("Html", m["Message"]["Body"])
         tok = text.split("v=", 1)[1].split()[0]
         with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
@@ -743,7 +748,7 @@ class SelfConfirmRoute(unittest.TestCase):
         with self.assertLogs(level="INFO") as logs:
             r = self.post(hal, f"t={tok}&path=%2Fdeal%2F9%3Fx%3D1%26v%3Dzz&website=")
         self.assertEqual(r["statusCode"], 303)
-        self.assertEqual(r["headers"]["Location"], "/deal/9?x=1")
+        self.assertEqual(r["headers"]["Location"], "https://trades.graciagroup.com/deal/9?x=1")
         self.assertEqual(len(r["cookies"]), 1)
         self.assertTrue(r["cookies"][0].startswith("gg_sc="))
         self.assertIn("HttpOnly", r["cookies"][0])
@@ -814,7 +819,7 @@ class SelfConfirmRoute(unittest.TestCase):
     def test_honeypot_and_not_applicable(self):
         tok = self.hal_token()
         r = self.post({"gg_id": gg_id("hal@x.com")}, f"t={tok}&path=/&website=spam")
-        self.assertEqual((r["statusCode"], r["headers"]["Location"]), (303, "/"))
+        self.assertEqual((r["statusCode"], r["headers"]["Location"]), (303, "https://trades.graciagroup.com/"))
         for em in ("ann@x.com", "ned@x.com", "rob@rainmakersecurities.com", "cob@y.com", "nobody@x.com"):
             hard_reset(lf)
             r = self.post({"gg_id": gg_id(em)}, f"t={tok}&path=/")
@@ -827,7 +832,7 @@ class SelfConfirmRoute(unittest.TestCase):
 
     def test_offsite_path_and_get(self):
         r = self.post({"gg_id": gg_id("hal@x.com")}, f"t={self.hal_token()}&path=https%3A%2F%2Fevil.example%2F")
-        self.assertEqual(r["headers"]["Location"], "/")
+        self.assertEqual(r["headers"]["Location"], "https://trades.graciagroup.com/")
         self.assertEqual(run(lf, qp={"view": "self-confirm"})["statusCode"], 405)
 
     def test_rate_limits(self):
@@ -844,6 +849,54 @@ class SelfConfirmRoute(unittest.TestCase):
         r = self.post(hal, f"t={self.hal_token()}&path=/")
         self.assertIn("couldn't record your confirmation", r["body"])
         self.assertEqual(self.calls, [])
+
+
+# --- Email wording, absolute same-site redirects, six-month cap, log redaction ---
+class LinkEmailAndRedaction(unittest.TestCase):
+    def test_email_text_exact(self):
+        self.assertEqual(lf.dg_email_text("Ann", "https://trades.graciagroup.com/deal/1?v=x"),
+                         "Hello Ann,\n\nHere is your personal link to current offers:\n"
+                         "https://trades.graciagroup.com/deal/1?v=x\n\n"
+                         "It opens the page you were viewing. Once you open it, offer terms on every deal page stay "
+                         "visible on this device and browser for six months, so you won't need to do this again for "
+                         "other deals. If you use another device, request a new link there.\n\n"
+                         "Please don't forward this link; it is tied to you.\n\n"
+                         "Best wishes,\nChad Gracia\n")
+        self.assertTrue(lf.dg_email_text("", "L").startswith("Hello,\n\n"))
+
+    def test_link_request_from_deal_page_with_preview(self):
+        reset(lf)
+        run(lf, qp={"view": "view-link-request"}, method="POST",
+            body="email=ann@x.com&path=%2Fdeal%2F55754575%3Fgate_preview%3Danon&website=",
+            headers={"content-type": "application/x-www-form-urlencoded"})
+        text = SES.sent[0]["Message"]["Body"]["Text"]["Data"]
+        self.assertIn("\nhttps://trades.graciagroup.com/deal/55754575?v=101.", text)
+        self.assertNotIn("gate_preview", text)
+
+    def test_v_redirect_strips_all_link_params_and_stays_on_site(self):
+        reset(lf, switch=False)
+        with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            tok = lf.dg_make_token("101")
+        r = run(lf, qp={"v": tok, "company": "Acme", "gate_preview": "anon", "admin_key": "zz"})
+        self.assertEqual(r["headers"]["Location"], "https://trades.graciagroup.com/?company=Acme")
+        self.assertIn("Max-Age=15811200;", r["cookies"][0])
+
+    def test_old_twelve_month_cookie_refused(self):
+        reset(lf, switch=True)
+        now = int(time.time())
+        with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            e = event(None, {"gg_view": view_tok("101", "viewc1", now + 365 * 86400)})
+            self.assertEqual(lf.dg_decide(e, {}, False)[:2], (True, "anon"))
+
+    def test_request_log_redacts_referer(self):
+        ref = "https://trades.graciagroup.com/?admin_key=SECRETADMIN&company=Acme&sso=sso-1&v=tok-1&code=c-1&state=s-1"
+        reset(lf, switch=False)
+        with self.assertLogs(level="INFO") as logs:
+            run(lf, qp={"company": "Acme"}, headers={"referer": ref})
+        joined = "\n".join(logs.output)
+        self.assertIn("company=Acme", joined)
+        for s in ("SECRETADMIN", "sso-1", "tok-1", "c-1", "s-1"):
+            self.assertNotIn(s, joined)
 
 
 if __name__ == "__main__":

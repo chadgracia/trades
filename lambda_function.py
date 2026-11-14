@@ -321,9 +321,10 @@ DG_SWITCH_TTL = 60
 DG_REQUESTS_PREFIX = "deal-gate/requests/"
 DG_SITE = "https://trades.graciagroup.com"
 DG_VIEW_COOKIE = "gg_view"
-DG_LINK_TTL = 183 * 86400
-DG_COOKIE_TTL = 365 * 86400
-DG_COOKIE_MAX_AGE = 31536000
+DG_LINK_TTL = 183 * 86400       # a ?v= link can be opened for six months
+DG_COOKIE_TTL = 183 * 86400     # gg_view grants access for six months after the click
+DG_COOKIE_MAX_AGE = DG_COOKIE_TTL
+DG_TOKEN_SKEW = 300             # clock slack when capping a token's remaining life
 DG_STATES = ("anon", "pending", "blocked", "cleared")
 DG_IL_LABELS = {"6950561": "Unknown", "7161646": "Hold: Screen for Substantive",
                 "6950562": "Non-Accredited", "7162165": "Substantive",
@@ -404,8 +405,13 @@ def dg_verify_token(token, prefix="view1", now=None):
     if not m:
         return None
     pid, exp, sig = m.group(1), m.group(2), m.group(3)
-    if int(exp) <= int(time.time() if now is None else now):
+    now_i = int(time.time() if now is None else now)
+    if int(exp) <= now_i:
         return None
+    max_ttl = {"view1": DG_LINK_TTL, "viewc1": DG_COOKIE_TTL,
+               "sc1": DG_SC_COOKIE_TTL, "scf1": DG_SC_FORM_TTL}.get(prefix)
+    if max_ttl and int(exp) - now_i > max_ttl + DG_TOKEN_SKEW:
+        return None    # claims a longer life than the policy (e.g. an old 12-month cookie)
     if not hmac.compare_digest(_dg_sig(prefix, pid, exp, secret), sig):
         return None
     return pid
@@ -448,20 +454,30 @@ def dg_clean_path(path, fallback="/"):
     return parts.path + (("?" + qs) if qs else "")
 
 
-def dg_current_path(event, fallback="/"):
-    """This request's path and query, without link/secret parameters."""
-    path = (event.get("rawPath") or event.get("path")
-            or (event.get("requestContext") or {}).get("http", {}).get("path") or "")
-    if not path.startswith("/"):
+def _dg_public_path(event, fallback, public_path):
+    """The public path for this request. Behind API Gateway's HTTP proxy the
+    Lambda's own rawPath/path is not the URL the viewer used (deal pages see "/"
+    with ?deal_id=), so callers that know the public path pass it."""
+    path = public_path or (event.get("rawPath") or event.get("path")
+                           or (event.get("requestContext") or {}).get("http", {}).get("path") or "")
+    if not isinstance(path, str) or not path.startswith("/") or path.startswith("//") or "\\" in path:
         path = fallback.split("?", 1)[0]
-    pairs = [(k, v) for k, v in _dg_query_pairs(event) if k not in DG_STRIP_PARAMS]
+    return path
+
+
+def dg_current_path(event, fallback="/", public_path=None, drop=()):
+    """This request's public path and query, without link/secret parameters
+    (and without `drop`, e.g. a deal_id the proxy integration adds)."""
+    path = _dg_public_path(event, fallback, public_path)
+    pairs = [(k, v) for k, v in _dg_query_pairs(event) if k not in DG_STRIP_PARAMS and k not in drop]
     qs = urllib.parse.urlencode(pairs)
     return path + (("?" + qs) if qs else "")
 
 
-def dg_link_redirect(event, fallback="/", now=None):
-    """For a valid, unexpired ?v= token: a 302 to the same URL without v (every
-    other parameter kept) that sets gg_view. Else None (render normally)."""
+def dg_link_redirect(event, fallback="/", now=None, public_path=None, drop=()):
+    """For a valid, unexpired ?v= token: a 302 to the same public URL on DG_SITE
+    without v or any other DG_STRIP_PARAMS (and without `drop`) that sets gg_view.
+    Else None (render normally)."""
     qp = event.get("queryStringParameters") or {}
     v = qp.get("v")
     if not v:
@@ -473,14 +489,8 @@ def dg_link_redirect(event, fallback="/", now=None):
     cookie = dg_view_cookie(pid, now)
     if not cookie:
         return None
-    path = (event.get("rawPath") or event.get("path")
-            or (event.get("requestContext") or {}).get("http", {}).get("path") or "")
-    if not path.startswith("/"):
-        path = fallback.split("?", 1)[0]
-    pairs = [(k, val) for k, val in _dg_query_pairs(event) if k != "v"]
-    qs = urllib.parse.urlencode(pairs)
     resp = {"statusCode": 302,
-            "headers": {"Location": path + (("?" + qs) if qs else ""),
+            "headers": {"Location": DG_SITE + dg_current_path(event, fallback, public_path, drop),
                         "Cache-Control": "private, no-store"},
             "body": ""}
     logger.info("deal-gate: personal link accepted; gg_view set")
@@ -845,6 +855,25 @@ DG_ADMIN_BOX = """<div class="gg-copylink" style="margin:12px 0;padding:10px 14p
 </script>"""
 
 
+def dg_redact_url(value):
+    """A URL (or any string with a query) with DG_STRIP_PARAMS values replaced
+    by [redacted]. Strings without '?' or '=' come back unchanged."""
+    if not isinstance(value, str) or ("?" not in value and "=" not in value):
+        return value
+    try:
+        head, sep, frag = value.partition("#")
+        base, q = head.split("?", 1) if "?" in head else ("", head)
+        pairs = urllib.parse.parse_qsl(q, keep_blank_values=True)
+        if not pairs:
+            return value
+        red = urllib.parse.urlencode([(k, "[redacted]" if k.lower() in DG_STRIP_PARAMS else v)
+                                      for k, v in pairs])
+        out = (base + "?" + red) if "?" in head else red
+        return out + (("#" + frag) if sep else "")
+    except Exception:
+        return "[redacted]"
+
+
 def dg_redacted_event(event):
     """The event for logging: link/secret query values, cookies and the body removed."""
     try:
@@ -861,7 +890,9 @@ def dg_redacted_event(event):
             ev["cookies"] = [str(c).split("=", 1)[0] + "=[redacted]" for c in ev["cookies"]]
         for hk in ("headers", "multiValueHeaders"):
             if isinstance(ev.get(hk), dict):
-                ev[hk] = {k: ("[redacted]" if str(k).lower() in ("cookie", "authorization") else v)
+                ev[hk] = {k: ("[redacted]" if str(k).lower() in ("cookie", "authorization")
+                              else [dg_redact_url(x) for x in v] if isinstance(v, list)
+                              else dg_redact_url(v))
                           for k, v in ev[hk].items()}
         if "body" in ev:
             ev["body"] = "[omitted]"
@@ -953,7 +984,11 @@ def _dg_hash(value):
 
 def dg_email_text(first_name, link):
     hello = f"Hello {first_name}," if first_name else "Hello,"
-    return (f"{hello}\n\nHere is your link:\n{link}\n\nIt opens the page you were viewing.\n\n"
+    return (f"{hello}\n\nHere is your personal link to current offers:\n{link}\n\n"
+            "It opens the page you were viewing. Once you open it, offer terms on every deal page stay "
+            "visible on this device and browser for six months, so you won't need to do this again for "
+            "other deals. If you use another device, request a new link there.\n\n"
+            "Please don't forward this link; it is tied to you.\n\n"
             "Best wishes,\nChad Gracia\n")
 
 
@@ -1093,7 +1128,8 @@ def _dg_same_site(event):
 
 
 def _dg_sc_back(path, cookies=None, event=None):
-    resp = {'statusCode': 303, 'headers': {'Location': path, 'Cache-Control': 'private, no-store'}, 'body': ''}
+    resp = {'statusCode': 303, 'headers': {'Location': DG_SITE + dg_clean_path(path, '/'),
+                                           'Cache-Control': 'private, no-store'}, 'body': ''}
     return dg_add_cookies(resp, event or {}, cookies) if cookies else resp
 
 

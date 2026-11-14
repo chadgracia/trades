@@ -48,10 +48,17 @@
   one-line SES email to Chad, and a 303 back with cookie `gg_sc` (sig over `sc1|pid|exp`, 12 h) that turns
   only that pid's "pending" into cleared until people-slim catches up. Self-Confirmed Accredited = cleared.
 - Personal links: env `VIEW_LINK_SECRET` (empty = links off). `?v=<pid>.<exp>.<sig>` (sig over
-  `view1|pid|exp`, 183 d) -> 302 without v + cookie `gg_view` (sig over `viewc1|pid|exp`, 365 d).
-  gg_view is VIEW-ONLY: never signed in, never gg_id, never an SSO token.
+  `view1|pid|exp`, 183 d) -> 302 + cookie `gg_view` (sig over `viewc1|pid|exp`, 183 d; Max-Age 183 d).
+  `dg_verify_token` also refuses any token whose remaining life exceeds its prefix's policy TTL (+300 s), so
+  pre-change 12-month gg_view cookies no longer work. gg_view is VIEW-ONLY: never signed in, never gg_id,
+  never an SSO token.
+- Redirects: every deal-gate redirect is absolute on DG_SITE and drops DG_STRIP_PARAMS. Deal pages sit behind
+  API Gateway "Trades" (HTTP proxy -> Function URL): the Lambda sees rawPath "/" and ?deal_id=, so
+  CRMDealDetails passes `public_path="/deal/{id}"`, `drop=("deal_id",)` to dg_link_redirect / dg_current_path.
+  Never rebuild a public URL from the event path in CRMDealDetails.
 - Gated output uses fixed placeholders in `<span class="gated">`; real values must not appear anywhere
-  in the response. Request logs go through `dg_redacted_event` (no cookies, body, or link/key params).
+  in the response. Request logs go through `dg_redacted_event` (no cookies, body, or link/key params; header values
+  such as Referer pass through `dg_redact_url`, which blanks DG_STRIP_PARAMS values).
 - trades-only: `POST /?view=view-link-request` (email-me-a-link, SES, limits in
   `full-pipeline-cache/deal-gate/requests/`), `POST /?view=self-confirm`, admin JSON `/?view=view-link`.
 
