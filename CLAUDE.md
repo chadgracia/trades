@@ -29,9 +29,21 @@
   unchanged (golden files in `tests/fixtures/` were rendered by the pre-gate code; keep them passing).
   Admin page + On/Off: trades `/?view=deal-gate`. Admin preview anywhere: `&gate_preview=anon|pending|blocked|cleared`.
 - Viewer state from people-slim.json (`_people_slim_status_index`, never people.json), loaded only
-  when the request carries gg_id / gg_view / gp. Investor Level `custom_label_3923758`:
-  Non-Accredited 6950562 = blocked; Hold 7161646 or unmatched gg_id email = pending; anything else = cleared.
-  Index unreadable: identified viewer = cleared.
+  when the request carries gg_id / gg_view / gp. Investor Level `custom_label_3923758` (ids hardcoded):
+  cleared ONLY Substantive 7162165, Accredited Investor 6950563, Qualified Client 7209227, Qualified Purchaser
+  6950564; blocked Non-Accredited 6950562; pending everything else (Hold 7161646, Self-Confirmed 7223459,
+  Unknown 6950561, blank, other ids, unmatched gg_id email). Index unreadable: identified viewer = cleared.
+- A valid personal link (gg_view / gp) clears whatever the level, unless that record is hard-blocked or
+  Non-Accredited. `s3://full-pipeline-cache/deal-gate/approved.json` `{pid: iso}` (written by daily-brief Approve):
+  a pid approved in the last 3 h is cleared unless hard-blocked (cached 60 s, missing = {}).
+- Self-confirm (trades `POST /?view=self-confirm`): button only for a pending viewer matching a blank / Unknown /
+  Hold record. Writes Investor Level = Self-Confirmed 7223459, note, email to Chad, queue entry. NEVER clears:
+  Self-Confirmed viewers (and gg_sc, which now only marks "just confirmed") see `DG_SC_THANKS_TEXT`.
+  Previews: `&gate_preview=confirm` (button) and `confirmed` (thank-you).
+- Access queue `s3://full-pipeline-cache/deal-gate/queue.json` `{"items": {email: {email, person_id, reason,
+  first_at, last_at}}, "declined": {email: iso}}`: trades writes it (self-confirm; first gated grid load, switch ON,
+  of a signed-in viewer with no record or a Hold record = "signup"; declined emails only return by self-confirming).
+  daily-brief reads it and Approves (Substantive + approved.json) / Declines (Hold + declined).
 - Hard block (beats every Investor Level, cleared matches, personal links and self-confirm; viewer just sees
   the neutral "access is being reviewed" box): a people-slim record is hard-blocked (rec[5]) if any email is
   @rainmakersecurities.com / @rainmakerapac.com (or subdomain) or in `DG_HARD_EMAILS` (= daily-brief

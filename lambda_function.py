@@ -326,19 +326,35 @@ DG_COOKIE_TTL = 183 * 86400     # gg_view grants access for six months after the
 DG_COOKIE_MAX_AGE = DG_COOKIE_TTL
 DG_TOKEN_SKEW = 300             # clock slack when capping a token's remaining life
 DG_STATES = ("anon", "pending", "blocked", "cleared")
+# Admin-only extra previews: the confirm button, and the thank-you shown after it.
+DG_PREVIEW_EXTRA = {"confirm": "pending", "confirmed": "pending"}
 DG_IL_LABELS = {"6950561": "Unknown", "7161646": "Hold: Screen for Substantive",
                 "6950562": "Non-Accredited", "7162165": "Substantive",
+                "7223459": "Self-Confirmed Accredited",
                 "6950563": "Accredited Investor", "7209227": "Qualified Client",
                 "6950564": "Qualified Purchaser"}
+DG_IL_UNKNOWN = "6950561"
 DG_IL_NON_ACCREDITED = "6950562"
 DG_IL_HOLD = "7161646"
-# "Self-Confirmed Accredited" (cleared, like any level other than Non-Accredited / Hold).
-# Its option id is looked up by name from the live Investor Level field (trades
-# self-confirm route) and added to DG_IL_LABELS at runtime.
+DG_IL_SUBSTANTIVE = "7162165"
+DG_IL_SELF = "7223459"           # Self-Confirmed Accredited: pending until Chad approves
 DG_IL_SELF_LABEL = "Self-Confirmed Accredited"
-# Self-confirm: Hold viewers can confirm they are accredited with one click.
+# The only levels that clear a viewer. Non-Accredited blocks; everything else
+# (Hold, Self-Confirmed, Unknown, blank, any other value) is pending.
+DG_IL_CLEARED = frozenset({"7162165", "6950563", "7209227", "6950564"})
+# Levels that may use the self-confirm button (blank counts too).
+DG_IL_CONFIRMABLE = frozenset({DG_IL_UNKNOWN, DG_IL_HOLD})
+# Self-confirm: a pending viewer on a blank / Unknown / Hold record can confirm
+# they are accredited. It never clears them: Chad approves from the daily brief.
 DG_SC_ROUTE = "/?view=self-confirm"
-DG_SC_COOKIE = "gg_sc"           # bridges the people-slim refresh lag (view-only, like gg_view)
+DG_SC_COOKIE = "gg_sc"           # "just self-confirmed": shows the thank-you, never clears
+DG_SC_THANKS = "thanks"
+DG_SC_THANKS_TEXT = "Thank you. Your access is being reviewed and we'll be in touch."
+# Access queue (trades writes, daily-brief reads/approves) and recent approvals.
+DG_QUEUE_KEY = "deal-gate/queue.json"
+DG_APPROVED_KEY = "deal-gate/approved.json"
+DG_APPROVED_WINDOW = 3 * 3600    # an approval counts until the people-slim rebuild catches up
+DG_APPROVED_TTL = 60
 DG_SC_COOKIE_TTL = 12 * 3600
 DG_SC_FORM_TTL = 2 * 3600
 DG_IQF_URL = "https://www.rainmakersecurities.com/investor-qualification-form-for-natural-persons"
@@ -353,6 +369,8 @@ DG_COGNITO_CLIENT = "71vrglkidm13jb73u7nje3d1t2"
 DG_STRIP_PARAMS = ("v", "gp", "sso", "admin_key", "key", "code", "gate_preview", "state", "token")
 _DG_TOKEN_RE = re.compile(r"^([A-Za-z0-9_-]{1,64})\.(\d{1,12})\.([0-9a-f]{32})$")
 _dg_switch_cache = {"enabled": None, "checked_at": 0.0}
+_dg_approved_cache = {"ids": {}, "checked_at": 0.0}
+_dg_queue_seen = set()           # emails this container already found queued/declined
 
 
 def _dg_secret():
@@ -530,12 +548,53 @@ def dg_people():
 
 
 def dg_level_state(level_ids):
+    """blocked: Non-Accredited. cleared: only Substantive, Accredited Investor,
+    Qualified Client or Qualified Purchaser (and not Hold). Everything else,
+    blank included, is pending."""
     ids = {str(i) for i in (level_ids or ())}
     if DG_IL_NON_ACCREDITED in ids:
         return "blocked"
     if DG_IL_HOLD in ids:
         return "pending"
-    return "cleared"
+    if ids & DG_IL_CLEARED:
+        return "cleared"
+    return "pending"
+
+
+def dg_level_confirmable(level_ids):
+    """Blank, Unknown or Hold: may use the self-confirm button."""
+    ids = {str(i) for i in (level_ids or ())}
+    return ids <= DG_IL_CONFIRMABLE
+
+
+def dg_approved(s3=None, now=None):
+    """{person_id: approved epoch} from deal-gate/approved.json for approvals in
+    the last DG_APPROVED_WINDOW seconds. Cached DG_APPROVED_TTL seconds; missing
+    or unreadable = {} (one log line). Never raises."""
+    now = time.time() if now is None else now
+    c = _dg_approved_cache
+    if c["checked_at"] and now - c["checked_at"] < DG_APPROVED_TTL:
+        return c["ids"]
+    c["checked_at"] = now
+    ids = {}
+    try:
+        s3 = s3 or boto3.client('s3')
+        data = json.loads(s3.get_object(Bucket=DG_BUCKET, Key=DG_APPROVED_KEY)["Body"].read())
+        for pid, at in (data.items() if isinstance(data, dict) else ()):
+            try:
+                ts = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                ep = ts.timestamp()
+            except (TypeError, ValueError):
+                continue
+            if 0 <= now - ep <= DG_APPROVED_WINDOW:
+                ids[str(pid)] = ep
+    except Exception as e:
+        if "NoSuchKey" not in type(e).__name__ and "NoSuchKey" not in str(e):
+            logger.info(f"deal-gate: approvals unreadable ({type(e).__name__})")
+    c["ids"] = ids
+    return ids
 
 
 def dg_level_label(level_ids):
@@ -633,20 +692,24 @@ def dg_sc_pid(event, now=None):
 
 
 def dg_viewer_detail(event, view_pid=None):
-    """(state, hold_pids). state is 'anon' | 'pending' | 'blocked' | 'cleared'
-    for a non-admin request; hold_pids are the matched people on Hold, only when
-    the state is 'pending' (they may self-confirm). people-slim.json is read only
-    when the request carries an identity."""
+    """(state, confirm_pids, thanked). state is 'anon' | 'pending' | 'blocked' |
+    'cleared' for a non-admin request. Only when the state is 'pending':
+    confirm_pids are the matched blank / Unknown / Hold people who may
+    self-confirm, and thanked is True when a matched person is Self-Confirmed (or
+    just confirmed: gg_sc), in which case there is no button. people-slim.json is
+    read only when the request carries an identity.
+    A valid personal link (view_pid) clears unless that record is hard-blocked or
+    Non-Accredited. A person in approved.json (last 3 h) is cleared unless hard-blocked."""
     email = _read_identity_email(event)
     view_pid = view_pid or dg_view_pid(event)
     if not email and not view_pid:
-        return "anon", ()
+        return "anon", (), False
     if email and dg_email_hard_blocked(email):
-        return "blocked", ()
+        return "blocked", (), False
     people = dg_people()
     if people is None:
         logger.warning("deal-gate: people index unreadable; identified viewer treated as cleared")
-        return "cleared", ()
+        return "cleared", (), False
     dg_by_id = people[1]
     raw, unmatched = {}, False
     if email:
@@ -654,15 +717,21 @@ def dg_viewer_detail(event, view_pid=None):
         raw.update(r)
         unmatched = not r
     if view_pid:
-        raw[str(view_pid)] = dg_record_state(dg_by_id.get(str(view_pid)))
-    sc = dg_sc_pid(event)
-    if sc and raw.get(sc) == "pending" and dg_by_id.get(sc):
-        raw[sc] = "cleared"      # just self-confirmed; people-slim not rebuilt yet
+        vs = dg_record_state(dg_by_id.get(str(view_pid)))
+        raw[str(view_pid)] = vs if vs in ("hard", "blocked") else "cleared"
+    approved = dg_approved() if raw else {}
+    for pid in list(raw):
+        if pid is not None and pid in approved and raw[pid] != "hard":
+            raw[pid] = "cleared"
     state = dg_combine(list(raw.values()) + (["pending"] if unmatched else []))
-    holds = ()
+    confirm, thanked = (), False
     if state == "pending":
-        holds = tuple(sorted(p for p, s in raw.items() if s == "pending" and p and dg_by_id.get(p)))
-    return state, holds
+        sc = dg_sc_pid(event)
+        pend = [p for p, s in raw.items() if s == "pending" and p and dg_by_id.get(p)]
+        thanked = any(p == sc or DG_IL_SELF in {str(i) for i in (dg_by_id[p][0] or ())} for p in pend)
+        if not thanked:
+            confirm = tuple(sorted(p for p in pend if dg_level_confirmable(dg_by_id[p][0])))
+    return state, confirm, thanked
 
 
 def dg_viewer_state(event, view_pid=None):
@@ -671,14 +740,25 @@ def dg_viewer_state(event, view_pid=None):
 
 
 def dg_self_confirm_token(event, view_pid=None, now=None):
-    """Signed form token for the self-confirm button, or None when this viewer
-    may not self-confirm (not pending on a Hold record, or links disabled)."""
-    if not _dg_secret():
+    """For a pending viewer: DG_SC_THANKS when they have already self-confirmed,
+    else a signed form token for the self-confirm button when they match a
+    blank / Unknown / Hold record, else None (links disabled, unmatched, other)."""
+    state, confirm, thanked = dg_viewer_detail(event, view_pid)
+    if state != "pending":
         return None
-    state, holds = dg_viewer_detail(event, view_pid)
-    if state != "pending" or not holds:
+    if thanked:
+        return DG_SC_THANKS
+    if not confirm or not _dg_secret():
         return None
-    return dg_make_token(holds[0], "scf1", DG_SC_FORM_TTL, now)
+    return dg_make_token(confirm[0], "scf1", DG_SC_FORM_TTL, now)
+
+
+def dg_box_token(event, preview, qp, view_pid=None):
+    """What the gate box shows below a pending state: an admin preview of the
+    button ('confirm') or the thank-you ('confirmed'), else dg_self_confirm_token."""
+    if preview:
+        return {"confirm": "preview", "confirmed": DG_SC_THANKS}.get((qp or {}).get("gate_preview"))
+    return dg_self_confirm_token(event, view_pid)
 
 
 def dg_sc_cookie(pid, now=None):
@@ -690,9 +770,9 @@ def dg_sc_cookie(pid, now=None):
             "Secure; HttpOnly; SameSite=Lax")
 
 
-def dg_mark_cleared(pids, option_id):
+def dg_mark_level(pids, option_id):
     """After a successful self-confirm: set these people's Investor Level in this
-    warm container's people-slim cache, so they need not wait for the next rebuild."""
+    warm container's people-slim cache (Self-Confirmed stays pending)."""
     dg_by_id = _people_slim_cache.get("dg_by_id")
     if not isinstance(dg_by_id, dict):
         return
@@ -708,6 +788,8 @@ def dg_decide(event, qp, is_admin, view_pid=None):
     viewer is not cleared. With the switch OFF a non-admin request does no
     people lookup at all."""
     prev = (qp or {}).get("gate_preview")
+    if is_admin and prev in DG_PREVIEW_EXTRA:
+        return True, DG_PREVIEW_EXTRA[prev], True
     if is_admin and prev in DG_STATES:
         return prev != "cleared", prev, True
     if is_admin:
@@ -763,8 +845,11 @@ function ggGateSubmit(f){
 
 def dg_gate_box(state, dest_url, confirm_token=None):
     """The gate box. Copy is fixed; never mentions tracking, the CRM or levels.
-    confirm_token (pending Hold viewers only): show the self-confirm button;
-    'preview' renders it for an admin preview without a token."""
+    confirm_token (pending viewers only): a token shows the self-confirm button
+    ('preview' renders it for an admin preview without a token); DG_SC_THANKS shows
+    the thank-you for a viewer who has self-confirmed."""
+    if state == "pending" and confirm_token == DG_SC_THANKS:
+        return DG_CSS + f'<div class="gate-box"><p>{html_mod.escape(DG_SC_THANKS_TEXT)}</p></div>'
     if state == "pending" and confirm_token:
         rel = dest_url[len(DG_SITE):] if dest_url.startswith(DG_SITE) else "/"
         rel = dg_clean_path(rel or "/", "/")
@@ -840,7 +925,7 @@ DG_ADMIN_BOX = """<div class="gg-copylink" style="margin:12px 0;padding:10px 14p
           if(m.hard){return '<div style="padding:4px 0;border-bottom:1px solid #eee;color:#777">'+
             esc(m.name)+' &middot; '+esc(m.company)+' &middot; '+esc(m.email)+
             ' &middot; <span style="color:#b91c1c">Blocked: Rainmaker/broker</span></div>';}
-          var warn=m.state==='cleared'?'':' <span style="color:#b45309">('+esc(m.state)+': this link will not unlock terms)</span>';
+          var warn=m.state==='blocked'?' <span style="color:#b45309">(blocked: this link will not unlock terms)</span>':'';
           return '<div class="ggc-row" data-pid="'+esc(m.pid)+'" style="padding:4px 0;cursor:pointer;border-bottom:1px solid #eee">'+
             esc(m.name)+' &middot; '+esc(m.company)+' &middot; '+esc(m.email)+' &middot; '+esc(m.state)+warn+
             ' <span class="ggc-msg" style="color:#16a34a"></span></div>';
@@ -853,6 +938,71 @@ DG_ADMIN_BOX = """<div class="gg-copylink" style="margin:12px 0;padding:10px 14p
   q.addEventListener('input',function(){clearTimeout(t);t=setTimeout(search,250);});
 })();
 </script>"""
+
+
+def dg_queue_add(email, pid, reason, s3=None, now=None):
+    """Add or update one access-queue entry (deal-gate/queue.json):
+    reason 'signup' is skipped when the email is already queued or declined;
+    'self-confirmed' always (re)queues and lifts a decline. Read-modify-write,
+    fail-soft: one log line (never the address), never raises. True if written."""
+    email = (email or "").strip().lower()
+    if not email or reason not in ("signup", "self-confirmed"):
+        return False
+    if reason == "signup" and email in _dg_queue_seen:
+        return False
+    now = time.time() if now is None else now
+    iso = datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds")
+    try:
+        s3 = s3 or boto3.client('s3')
+        try:
+            data = json.loads(s3.get_object(Bucket=DG_BUCKET, Key=DG_QUEUE_KEY)["Body"].read())
+        except Exception as e:
+            if "NoSuchKey" not in type(e).__name__ and "NoSuchKey" not in str(e):
+                raise
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        items = data.get("items") if isinstance(data.get("items"), dict) else {}
+        declined = data.get("declined") if isinstance(data.get("declined"), dict) else {}
+        if reason == "signup" and (email in items or email in declined):
+            _dg_queue_seen.add(email)
+            return False
+        prev = items.get(email) if isinstance(items.get(email), dict) else {}
+        items[email] = {"email": email, "person_id": (str(pid) if pid else prev.get("person_id")),
+                        "reason": reason, "first_at": prev.get("first_at") or iso, "last_at": iso}
+        if reason == "self-confirmed":
+            declined.pop(email, None)
+        s3.put_object(Bucket=DG_BUCKET, Key=DG_QUEUE_KEY, ContentType="application/json",
+                      Body=json.dumps({"items": items, "declined": declined}).encode())
+        _dg_queue_seen.add(email)
+        logger.info(f"deal-gate: access queue updated ({reason})")
+        return True
+    except Exception as e:
+        logger.warning(f"deal-gate: access queue write failed ({type(e).__name__})")
+        return False
+
+
+def dg_queue_signup(event, s3=None, now=None):
+    """Gated page, switch ON, pending viewer: queue a signed-in viewer with no CRM
+    record or a Hold record (reason 'signup'). Never for anonymous viewers."""
+    email = _read_identity_email(event)
+    if not email or dg_email_hard_blocked(email):
+        return False
+    key = email.strip().lower()
+    if key in _dg_queue_seen:
+        return False
+    people = dg_people()
+    if people is None:
+        return False
+    by_email, dg_by_id, _ = people
+    pids = sorted(by_email.get(key) or ())
+    if not pids:
+        return dg_queue_add(key, None, "signup", s3, now)
+    holds = [p for p in pids if DG_IL_HOLD in {str(i) for i in ((dg_by_id.get(p) or ((),))[0] or ())}]
+    if holds:
+        return dg_queue_add(key, holds[0], "signup", s3, now)
+    _dg_queue_seen.add(key)
+    return False
 
 
 def dg_redact_url(value):
@@ -1085,36 +1235,9 @@ def _dg_view_link_api(event):
 
 DG_SC_PER_PERSON_DAY = 3
 DG_SC_NOTE_CATEGORY = 69759      # same default note category as pipeline-agent add_note
-_dg_sc_option_cache = {'id': None, 'ts': 0.0}
-
-
-def _dg_norm_label(s):
-    return re.sub(r'[\s\-]+', ' ', str(s or '')).strip().lower()
-
-
 def dg_self_confirm_option(now=None):
-    """Option id of DG_IL_SELF_LABEL on the Investor Level field, looked up by name
-    (read-only Pipeline GET), cached 24 h (10 min after a failure). None if not found.
-    Also adds it to DG_IL_LABELS. Never raises."""
-    now = time.time() if now is None else now
-    c = _dg_sc_option_cache
-    if c['ts'] and now - c['ts'] < (86400 if c['id'] else 600):
-        return c['id']
-    c['ts'] = now
-    try:
-        res = _fields_admin_list('person', 'Investor Level')
-        for f in res.get('fields') or []:
-            if f.get('key') != INVESTOR_LEVEL_FIELD:
-                continue
-            for o in f.get('options') or []:
-                if o.get('id') is not None and _dg_norm_label(o.get('name')) == _dg_norm_label(DG_IL_SELF_LABEL):
-                    c['id'] = int(o['id'])
-                    DG_IL_LABELS[str(c['id'])] = DG_IL_SELF_LABEL
-                    return c['id']
-        logger.warning("deal-gate: Self-Confirmed Accredited option not found")
-    except Exception as e:
-        logger.warning(f"deal-gate: Investor Level lookup failed ({type(e).__name__})")
-    return c['id']
+    """Option id of Self-Confirmed Accredited on the Investor Level field (verified, hardcoded)."""
+    return int(DG_IL_SELF)
 
 
 def _dg_same_site(event):
@@ -1145,10 +1268,12 @@ def _dg_sc_failed(path):
 
 
 def _dg_self_confirm(event, s3=None, ses=None, now=None):
-    """POST /?view=self-confirm: a viewer on Hold confirms they are accredited.
-    Pipeline PUT of Investor Level = Self-Confirmed Accredited first; only on success:
-    note on the person, warm-cache update, one-line email to Chad, gg_sc cookie and
-    a 303 back to the page. Never logs the address, IP or token."""
+    """POST /?view=self-confirm: a pending viewer on a blank / Unknown / Hold record
+    confirms they are accredited. Pipeline PUT of Investor Level = Self-Confirmed
+    Accredited first; only on success: note on the person, warm-cache update (still
+    pending), access-queue entry, one-line email to Chad, gg_sc cookie (thank-you
+    only) and a 303 back to the page. It never clears the viewer: Chad approves from
+    the daily brief. Never logs the address, IP or token."""
     p = _dg_body_params(event)
     path = dg_clean_path((p.get('path') or '/').strip(), '/')
     if not _dg_same_site(event):
@@ -1168,7 +1293,7 @@ def _dg_self_confirm(event, s3=None, ses=None, now=None):
             return _dg_sc_back(path)
         if not _dg_secret():
             return _dg_sc_failed(path)
-        state, holds = dg_viewer_detail(event)
+        state, holds, _thanked = dg_viewer_detail(event)
         if state != 'pending' or not holds:
             logger.info(f"deal-gate: self-confirm not applicable ({state})")
             return _dg_sc_back(path)
@@ -1198,14 +1323,15 @@ def _dg_self_confirm(event, s3=None, ses=None, now=None):
                 'note_category_id': DG_SC_NOTE_CATEGORY, 'person_id': int(pid)}})
         except Exception as e:
             logger.warning(f"deal-gate: self-confirm note failed ({type(e).__name__})")
-    dg_mark_cleared(holds, opt)
+    dg_mark_level(holds, opt)
+    dg_queue_add(_read_identity_email(event), holds[0], 'self-confirmed', s3, now)
     try:
         people = dg_people()
         rec = (people[1].get(holds[0]) if people else None) or ((), '', '', '', ())
         name, company, emails = rec[2], rec[3], rec[4]
         email = _read_identity_email(event) or (emails[0] if emails else '')
         line = (f"Self-confirmed accredited: {name or '(no name)'}, {email or '(no email)'}, "
-                f"{company or '(no company)'}, {url}. No action needed; downgrade in Pipeline if wrong.")
+                f"{company or '(no company)'}, {url}. Still pending: approve or decline in the daily brief access queue.")
         (ses or boto3.client('ses', region_name='us-east-1')).send_email(
             Source=DG_EMAIL_FROM, Destination={'ToAddresses': [DG_EMAIL_REPLY_TO]},
             Message={'Subject': {'Data': f"Self-confirmed accredited: {name or email or holds[0]}", 'Charset': 'UTF-8'},
@@ -1283,7 +1409,7 @@ def _dg_admin_page(event, post=False, s3=None):
         + btn.format(a='on', label='Turn ON') + btn.format(a='off', label='Turn OFF')
         + f'<table style="margin-top:20px;border-collapse:collapse">{table}</table>'
         '<p style="margin-top:20px;color:#666;font-size:13px">Preview any page as a viewer with '
-        '&amp;gate_preview=anon|pending|blocked|cleared (admins only).</p>'
+        '&amp;gate_preview=anon|pending|blocked|cleared, or confirm / confirmed for the self-confirm button and its thank-you (admins only).</p>'
         '</body></html>')
     return {'statusCode': 200,
             'headers': {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-store'},
@@ -3811,6 +3937,8 @@ def lambda_handler(event, context):
         _grid_is_admin = False
     if dg_gated:
         logger.info(f"deal-gate: terms withheld ({dg_state})")
+        if dg_state == 'pending' and not dg_preview:
+            dg_queue_signup(event)
     try:
         deals = tr_filter_deals(_load_deals_from_s3(), admin=_grid_is_admin)
     except Exception as e:
@@ -3970,7 +4098,7 @@ def lambda_handler(event, context):
     _dg_hide = ' style="display:none"' if dg_gated else ''
     _dg_sc_tok = None
     if dg_gated and dg_state == 'pending':
-        _dg_sc_tok = 'preview' if dg_preview else dg_self_confirm_token(event)
+        _dg_sc_tok = dg_box_token(event, dg_preview, query_params)
     _dg_box_html = dg_gate_box(dg_state, DG_SITE + dg_current_path(event, '/'), _dg_sc_tok) if dg_gated else ''
     _dg_admin_html = DG_ADMIN_BOX if _is_admin else ''
 
