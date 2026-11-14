@@ -32,6 +32,15 @@
   when the request carries gg_id / gg_view / gp. Investor Level `custom_label_3923758`:
   Non-Accredited 6950562 = blocked; Hold 7161646 or unmatched gg_id email = pending; anything else = cleared.
   Index unreadable: identified viewer = cleared.
+- Hard block (beats every Investor Level, cleared matches and personal links; viewer just sees the neutral
+  "access is being reviewed" box): a people-slim record is hard-blocked (rec[5]) if any email is
+  @rainmakersecurities.com / @rainmakerapac.com (or subdomain) or in `DG_HARD_EMAILS` (= daily-brief
+  MAILER_BLOCK_EMAILS), Transactor Type `custom_label_3759163` has 6577160 / 6888332 / 6888333, or Source = RMS.
+  The gg_id email itself is checked against the email rules even with no record or an unreadable index.
+  `dg_record_state` -> "hard"; `dg_combine`: any "hard" -> "blocked".
+- Source rule: ids live in `s3://full-pipeline-cache/deal-gate/source-field.json` `{"field_key", "rms_ids"}`,
+  written ONLY by trades `/?view=deal-gate` (read-only Pipeline lookup of the person field named exactly
+  "Source", option "RMS"); read in the people-slim pass. Missing/unreadable = Source rule off.
 - Personal links: env `VIEW_LINK_SECRET` (empty = links off). `?v=<pid>.<exp>.<sig>` (sig over
   `view1|pid|exp`, 183 d) -> 302 without v + cookie `gg_view` (sig over `viewc1|pid|exp`, 365 d).
   gg_view is VIEW-ONLY: never signed in, never gg_id, never an SSO token.

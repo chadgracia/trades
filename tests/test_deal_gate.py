@@ -465,5 +465,169 @@ class Logging(unittest.TestCase):
         self.assertIn("Acme", red)
 
 
+TERM = "41.13"   # a real offer term in the fixture
+
+
+# --- Hard block (Rainmaker / brokers / RMS source) -------------------------
+SRC_KEY = "deal-gate/source-field.json"
+SRC_FIELD = "custom_label_9999001"
+HARD_PEOPLE = [
+    {"id": 201, "first_name": "Rob", "email": "rob@rainmakersecurities.com",          # a: domain
+     "custom_fields": {"custom_label_3923758": 6950563}},
+    {"id": 202, "first_name": "Amy", "emails": [{"email": "amy@sg.RainmakerAPAC.com"}, {"email": "amy@y.com"}],
+     "custom_fields": {"custom_label_3923758": 6950564}},                              # a: subdomain, 2nd email
+    {"id": 203, "first_name": "Sta", "email": "STaylor@spry.vc",                       # b: listed email
+     "custom_fields": {"custom_label_3923758": 6950563}},
+    {"id": 204, "first_name": "Cob", "email": "cob@y.com",                             # c: Co-Broker
+     "custom_fields": {"custom_label_3923758": 6950563, "custom_label_3759163": [6577160, 6484810]}},
+    {"id": 205, "first_name": "Ffi", "email": "ffi@y.com",                             # c: Foreign Finder
+     "custom_fields": {"custom_label_3923758": 7209227, "custom_label_3759163": 6888332}},
+    {"id": 206, "first_name": "Int", "email": "int@y.com",                             # c: Intermediary - Other
+     "custom_fields": {"custom_label_3923758": 6950563, "custom_label_3759163": [{"id": 6888333}]}},
+    {"id": 207, "first_name": "Src", "email": "src@y.com",                             # d: Source = RMS option
+     "custom_fields": {"custom_label_3923758": 6950563, SRC_FIELD: 7300001}},
+    {"id": 208, "first_name": "Txt", "email": "txt@y.com",                             # d: Source text "RMS"
+     "custom_fields": {"custom_label_3923758": 6950563, SRC_FIELD: " rms "}},
+    {"id": 209, "first_name": "Dup", "email": "dup@y.com",                             # shared: hard + cleared
+     "custom_fields": {"custom_label_3923758": 6950562, "custom_label_3759163": 6888332}},
+    {"id": 210, "first_name": "Dup", "email": "dup@y.com", "custom_fields": {"custom_label_3923758": 6950564}},
+    {"id": 211, "first_name": "Okk", "email": "ok@notrainmakersecurities.com",         # negatives
+     "custom_fields": {"custom_label_3923758": 6950563, "custom_label_3759163": 6484810, SRC_FIELD: 7300002}},
+]
+HARD_EMAILS = ["rob@rainmakersecurities.com", "amy@y.com", "staylor@spry.vc", "cob@y.com", "ffi@y.com",
+               "int@y.com", "src@y.com", "txt@y.com", "dup@y.com"]
+
+
+def hard_reset(mod, switch=True, source=True):
+    reset(mod, switch=switch)
+    S3.objects[(B, SLIM)] = json.dumps({"people": PEOPLE + HARD_PEOPLE}).encode()
+    if source:
+        S3.objects[(B, SRC_KEY)] = json.dumps({"field_key": SRC_FIELD, "rms_ids": ["7300001"]}).encode()
+
+
+def hard_state(cookies):
+    with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+        e = event(None, cookies)
+        return lf.dg_decide(e, {}, False)[:2]
+
+
+class HardBlock(unittest.TestCase):
+    def test_each_rule_beats_cleared_level(self):
+        for em in HARD_EMAILS:
+            hard_reset(lf)
+            self.assertEqual(hard_state({"gg_id": gg_id(em)}), (True, "blocked"), em)
+        hard_reset(lf)
+        self.assertEqual(hard_state({"gg_id": gg_id("ok@notrainmakersecurities.com")}), (False, "cleared"))
+        self.assertEqual(hard_state({"gg_id": gg_id("ann@x.com")}), (False, "cleared"))
+
+    def test_rule_flags_on_records(self):
+        hard_reset(lf)
+        lf._people_slim_status_index()
+        dg = lf._people_slim_cache["dg_by_id"]
+        self.assertEqual(sorted(p for p, r in dg.items() if r[5]),
+                         ["201", "202", "203", "204", "205", "206", "207", "208", "209"])
+        self.assertEqual(lf._people_slim_cache["dg_field_counts"], {"transactor": 5, "source": 3})
+
+    def test_source_rule_off_without_saved_field(self):
+        hard_reset(lf, source=False)
+        self.assertEqual(hard_state({"gg_id": gg_id("src@y.com")}), (False, "cleared"))
+        self.assertEqual(hard_state({"gg_id": gg_id("cob@y.com")}), (True, "blocked"))
+        hard_reset(lf)
+        S3.objects[(B, SRC_KEY)] = b'{"field_key": "not a field"}'
+        self.assertEqual(hard_state({"gg_id": gg_id("src@y.com")}), (False, "cleared"))
+
+    def test_viewer_email_itself_without_record(self):
+        for em in ("zoe@rainmakersecurities.com", "x@mail.rainmakerapac.com", "lh@lab-137.com"):
+            hard_reset(lf)
+            self.assertEqual(hard_state({"gg_id": gg_id(em)}), (True, "blocked"), em)
+        hard_reset(lf)
+        self.assertEqual(hard_state({"gg_id": gg_id("x@rainmakersecurities.co")}), (True, "pending"))
+        reset(lf, switch=True, slim=False)          # index unreadable: hard email still blocked
+        self.assertEqual(hard_state({"gg_id": gg_id("zoe@rainmakersecurities.com")}), (True, "blocked"))
+
+    def test_hard_beats_cleared_on_combined_identity(self):
+        exp = int(time.time()) + 3600
+        hard_reset(lf)
+        self.assertEqual(lf.dg_combine(["cleared", "hard"]), "blocked")
+        self.assertEqual(lf.dg_combine(["cleared", "blocked"]), "cleared")
+        for cookies in ({"gg_id": gg_id("ann@x.com"), "gg_view": view_tok("201", "viewc1", exp)},
+                        {"gg_id": gg_id("zoe@rainmakersecurities.com"), "gg_view": view_tok("101", "viewc1", exp)},
+                        {"gg_view": view_tok("204", "viewc1", exp)}):
+            hard_reset(lf)
+            self.assertEqual(hard_state(cookies), (True, "blocked"), cookies)
+
+    def test_hard_beats_valid_view_link(self):
+        hard_reset(lf)
+        with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            tok = lf.dg_make_token("207")
+        r = run(lf, qp={"v": tok})
+        self.assertEqual(r["statusCode"], 302)
+        cookie = r["cookies"][0].split(";")[0].split("=", 1)
+        hard_reset(lf)
+        body = run(lf, cookies={cookie[0]: cookie[1]})["body"]
+        self.assertNotIn(TERM, body)
+        self.assertIn("Your access is being reviewed", body)
+        for s in ("Rainmaker/broker", "Hard-blocked", "RMS source"):
+            self.assertNotIn(s, body)
+
+    def test_switch_off_unchanged_for_hard_viewer(self):
+        hard_reset(lf, switch=False)
+        r = run(lf, cookies={"gg_id": gg_id("rob@rainmakersecurities.com")})
+        self.assertIn(TERM, r["body"])
+        self.assertNotIn('class="gated"', r["body"])
+        self.assertFalse([k for k in S3.gets if SLIM in k or SRC_KEY in k])
+
+
+class HardBlockTradesRoutes(unittest.TestCase):
+    def test_view_link_api_refuses_hard(self):
+        hard_reset(lf)
+        r = run(lf, qp={"view": "view-link", "pid": "201", "dest": "/"}, cookies={"admin_key": ADMIN})
+        j = json.loads(r["body"])
+        self.assertEqual(j, {"error": "Blocked: Rainmaker/broker"})
+        m = json.loads(run(lf, qp={"view": "view-link", "q": "y.com"}, cookies={"admin_key": ADMIN})["body"])["matches"]
+        flags = {x["pid"]: (x["state"], x["hard"]) for x in m}
+        self.assertEqual(flags["204"], ("blocked", True))
+        self.assertEqual(flags["210"], ("cleared", False))
+        self.assertIn("Blocked: Rainmaker/broker", run(lf, cookies={"admin_key": ADMIN})["body"])  # admin box JS
+
+    def test_link_request_refuses_hard(self):
+        for em in HARD_EMAILS + ["zoe@rainmakersecurities.com"]:
+            hard_reset(lf)
+            r = run(lf, qp={"view": "view-link-request"}, method="POST", body=f"email={em}&path=/",
+                    headers={"x-forwarded-for": em})
+            self.assertEqual(json.loads(r["body"]), {"ok": True})
+            self.assertEqual(SES.sent, [], em)
+        hard_reset(lf)
+        run(lf, qp={"view": "view-link-request"}, method="POST", body="email=ann@x.com&path=/")
+        self.assertEqual(len(SES.sent), 1)
+
+    def test_admin_page_counts_and_source_resolution(self):
+        hard_reset(lf, switch=False, source=False)
+        fields = {"type": "person", "count": 2, "fields": [
+            {"id": 9999001, "key": SRC_FIELD, "name": "Source", "field_type": "dropdown",
+             "options": [{"id": 7300001, "name": "RMS"}, {"id": 7300002, "name": "Web"}]},
+            {"id": 9999002, "key": "custom_label_9999002", "name": "Source Detail", "field_type": "text",
+             "options": []}]}
+        with mock.patch.object(lf, "_fields_admin_list", lambda t, q=None: fields):
+            body = run(lf, qp={"view": "deal-gate"}, cookies={"admin_key": ADMIN})["body"]
+        saved = json.loads(S3.objects[(B, SRC_KEY)])
+        self.assertEqual((saved["field_key"], saved["rms_ids"]), (SRC_FIELD, ["7300001"]))
+        self.assertIn('Hard-blocked (Rainmaker/broker/RMS source)</th><td style="padding:4px 0">9<', body)
+        self.assertIn('Records with Transactor Type set</th><td style="padding:4px 0">5<', body)
+        self.assertIn("custom_label_9999001 (dropdown); RMS option id: 7300001", body)
+        self.assertIn('Records with Source set</th><td style="padding:4px 0">3<', body)
+        # Pipeline lookup failing keeps the saved rule
+        body = run(lf, qp={"view": "deal-gate"}, cookies={"admin_key": ADMIN})["body"]
+        self.assertIn("Pipeline lookup failed (", body)
+        self.assertIn("saved rule: custom_label_9999001 = 7300001", body)
+        # write denied: rule stays off, page says so
+        hard_reset(lf, switch=False, source=False)
+        S3.deny_put = {SRC_KEY}
+        with mock.patch.object(lf, "_fields_admin_list", lambda t, q=None: fields):
+            body = run(lf, qp={"view": "deal-gate"}, cookies={"admin_key": ADMIN})["body"]
+        self.assertIn("NOT saved (AccessDenied)", body)
+        self.assertIn('Hard-blocked (Rainmaker/broker/RMS source)</th><td style="padding:4px 0">7<', body)
+
+
 if __name__ == "__main__":
     unittest.main()
