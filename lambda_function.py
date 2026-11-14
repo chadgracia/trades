@@ -1590,6 +1590,7 @@ def _load_pipeline_updated_at():
                     'updated_at': _parse_updated_at(d.get('updated_at')),
                     'refresh': _cf_int(cf, REFRESH_FIELD),
                     'seller_role': _cf_int(cf, SELLER_ROLE_FIELD),
+                    'visibility': vis_normalize(_cf_scalar(cf, VISIBILITY_FIELD)),
                 }
             except (KeyError, TypeError, ValueError, AttributeError):
                 continue
@@ -1602,6 +1603,87 @@ def _load_pipeline_updated_at():
     _PIPELINE_UPDATED_CACHE['ts'] = now
     _PIPELINE_UPDATED_CACHE['map'] = out
     return out
+
+
+# --- Deal Visibility (custom_label_4013323) ---------------------------------
+# Interested-only and Private deals are dropped from every public list
+# (tr_filter_deals) and the sitemap; admins still see them in the grid with a
+# tag. Values come from full-pipeline-cache/deals.json (the 10-min
+# _load_pipeline_updated_at load) with visibility-overrides.json (written by
+# deal-update-form, cached 60 s) on top. Blank/unknown = All Investors.
+# Any lookup failure = no visibility filtering (current behaviour).
+VISIBILITY_FIELD = "custom_label_4013323"
+VIS_ALL = 7223456          # "All Investors"
+VIS_INTERESTED = 7223457   # "Interested investors only"
+VIS_PRIVATE = 7223458      # "Private"
+VIS_HIDDEN_FROM_LISTS = (VIS_INTERESTED, VIS_PRIVATE)
+VIS_ADMIN_TAGS = {VIS_INTERESTED: "Interested only", VIS_PRIVATE: "Private"}
+VISIBILITY_OVERRIDES_KEY = "visibility-overrides.json"
+VIS_OVERRIDES_TTL = 60
+_VIS_OVERRIDES_CACHE = {'ts': 0.0, 'val': None}
+
+
+def vis_normalize(v):
+    """Pipeline dropdown value (int, numeric str, "7223458.0", 1-element list) -> option id.
+    Blank/missing/unparseable/unknown -> VIS_ALL. Never raises."""
+    if isinstance(v, list):
+        v = v[0] if v else None
+    if v is None or isinstance(v, bool):
+        return VIS_ALL
+    try:
+        n = int(float(str(v).strip()))
+    except (TypeError, ValueError, OverflowError):
+        return VIS_ALL
+    return n if n in (VIS_ALL, VIS_INTERESTED, VIS_PRIVATE) else VIS_ALL
+
+
+def _load_visibility_overrides(s3=None, now=None):
+    """{deal_id(str): option_id} from full-pipeline-cache/visibility-overrides.json,
+    cached 60 s per container. Missing file = {}. Other errors raise."""
+    now = time.time() if now is None else now
+    c = _VIS_OVERRIDES_CACHE
+    if c['val'] is not None and now - c['ts'] < VIS_OVERRIDES_TTL:
+        return c['val']
+    s3 = s3 or boto3.client('s3')
+    try:
+        obj = s3.get_object(Bucket='full-pipeline-cache', Key=VISIBILITY_OVERRIDES_KEY)
+    except Exception as e:
+        code = (getattr(e, 'response', None) or {}).get('Error', {}).get('Code')
+        if code not in ('NoSuchKey', '404') and type(e).__name__ != 'NoSuchKey':
+            raise
+        raw = {}
+    else:
+        raw = json.loads(obj['Body'].read().decode('utf-8'))
+    out = {}
+    if isinstance(raw, dict):
+        for k, rec in raw.items():
+            if isinstance(rec, dict):
+                out[str(k).strip()] = vis_normalize(rec.get('v'))
+    c.update(ts=now, val=out)
+    return out
+
+
+def visibility_map():
+    """{deal_id(str): option_id}: deals.json values with overrides on top. May raise."""
+    out = {did: rec.get('visibility', VIS_ALL)
+           for did, rec in _load_pipeline_updated_at().items()}
+    out.update(_load_visibility_overrides())
+    return out
+
+
+def visibility_map_safe():
+    """visibility_map(), or {} (no filtering) after one log line on failure."""
+    try:
+        return visibility_map()
+    except Exception as e:
+        logger.error(f"visibility: lookup failed; no visibility filtering: {type(e).__name__}")
+        return {}
+
+
+def visibility_hidden_ids(vmap=None):
+    """Set of deal ids (str) that are Interested-only or Private. Never raises."""
+    vmap = visibility_map_safe() if vmap is None else vmap
+    return {did for did, v in vmap.items() if v in VIS_HIDDEN_FROM_LISTS}
 
 
 def _unconfirmed_since(deal_id, updated_map):
@@ -1912,13 +1994,18 @@ def transferability_unavailable_ids(s3=None, now=None):
     return out
 
 
-def tr_filter_deals(deals):
-    """Drop UNAVAILABLE deals from a pipeline_deals.json-style list. Never raises."""
+def tr_filter_deals(deals, admin=False):
+    """Drop UNAVAILABLE deals from a pipeline_deals.json-style list, and, unless
+    admin, Interested-only / Private deals. Never raises."""
     try:
         hidden = transferability_unavailable_ids()
     except Exception as e:
         logger.error(f"transferability: filter failed; no restrictions: {e}")
-        return deals
+        hidden = set()
+    if not admin:
+        vis_hidden = visibility_hidden_ids()
+        if vis_hidden:
+            hidden = set(hidden) | vis_hidden
     if not hidden:
         return deals
     return [d for d in deals if str(d.get('id')) not in hidden]
@@ -2060,7 +2147,27 @@ def _sitemap_cutoff():
     return (datetime.now(timezone.utc) - timedelta(days=1095)).strftime('%Y-%m-%d')
 
 
-def _sitemap_keep_pipeline_deal(deal, cutoff):
+def _sitemap_vis_hidden(deal, overrides):
+    """True if a raw Pipeline deal is Interested-only or Private (override wins)."""
+    did = str(deal.get('id'))
+    if did in (overrides or {}):
+        v = overrides[did]
+    else:
+        v = vis_normalize(_cf_scalar(deal.get('custom_fields') or {}, VISIBILITY_FIELD))
+    return v in VIS_HIDDEN_FROM_LISTS
+
+
+def _sitemap_overrides_safe():
+    try:
+        return _load_visibility_overrides()
+    except Exception as e:
+        logger.error(f"visibility: lookup failed; no visibility filtering: {type(e).__name__}")
+        return {}
+
+
+def _sitemap_keep_pipeline_deal(deal, cutoff, overrides=None):
+    if _sitemap_vis_hidden(deal, _sitemap_overrides_safe() if overrides is None else overrides):
+        return False
     created = _sitemap_date(deal.get('created_at'))
     if not created or created < cutoff:
         return False
@@ -2104,6 +2211,7 @@ def _sitemap_backfill(restart=False):
     added = 0
     if not bf.get('done'):
         cutoff = _sitemap_cutoff()
+        overrides = _sitemap_overrides_safe()
         page = int(bf.get('next_page') or 1)
         start = time.time()
         for i in range(8):
@@ -2124,7 +2232,10 @@ def _sitemap_backfill(restart=False):
                 break
             entries = payload.get('entries') or []
             for d in entries:
-                if d.get('id') is None or not _sitemap_keep_pipeline_deal(d, cutoff):
+                if d.get('id') is not None and _sitemap_vis_hidden(d, overrides):
+                    data['deals'].pop(str(d['id']), None)   # Interested-only / Private
+                    continue
+                if d.get('id') is None or not _sitemap_keep_pipeline_deal(d, cutoff, overrides):
                     continue
                 key = str(d['id'])
                 if key not in data['deals']:
@@ -2147,11 +2258,15 @@ def _build_sitemap_xml():
     live = _load_deals_from_s3()
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     changed = False
+    vis_hidden = visibility_hidden_ids()
+    for key in [k for k in data['deals'] if str(k) in vis_hidden]:
+        del data['deals'][key]   # Interested-only / Private: drop from served-deals.json
+        changed = True
     for d in live:
         if d.get('id') is None:
             continue
         key = str(d['id'])
-        if key in data['deals']:
+        if key in data['deals'] or key in vis_hidden:
             continue
         company = d.get('company')
         if isinstance(company, dict):
@@ -2340,7 +2455,7 @@ def lambda_handler(event, context):
         if not _idx_is_admin:
             return _json_response(403, {'error': 'Forbidden'})
         try:
-            _idx_deals = tr_filter_deals(_load_deals_from_s3())
+            _idx_deals = tr_filter_deals(_load_deals_from_s3(), admin=True)
         except Exception as e:
             logger.error(f"deal-index load failed: {e}")
             return _json_response(500, {'error': 'Failed to load deals'})
@@ -2571,8 +2686,10 @@ def lambda_handler(event, context):
         }
 
     # GET path: render the HTML dashboard as before.
+    _grid_is_admin = (_is_admin_key(query_params.get('admin_key'))
+                      or _is_admin_key(_get_cookie(event, 'admin_key')))
     try:
-        deals = tr_filter_deals(_load_deals_from_s3())
+        deals = tr_filter_deals(_load_deals_from_s3(), admin=_grid_is_admin)
     except Exception as e:
         logger.error(f"Error reading data from S3: {str(e)}")
         return {
@@ -2640,6 +2757,7 @@ def lambda_handler(event, context):
     _is_admin = _admin_param_ok or _is_admin_key(_get_cookie(event, 'admin_key'))
 
     _updated_map = _load_pipeline_updated_at()
+    _vis_map = visibility_map_safe() if _is_admin else {}
 
     table_rows = ""
     for deal in deals:
@@ -2655,6 +2773,11 @@ def lambda_handler(event, context):
         _unconf = _unconfirmed_since(deal['id'], _updated_map)
         if _unconf:
             company_cell += f' <span class="unconfirmed-icon" title="{_unconf}">⏱</span>'
+        _vis_tag = VIS_ADMIN_TAGS.get(_vis_map.get(str(deal['id'])))
+        if _vis_tag:
+            company_cell += (f' <span class="vis-tag" title="Visibility: {_vis_tag} (hidden from public lists)"'
+                             f' style="font-size:10px;padding:1px 5px;border-radius:3px;'
+                             f'border:1px solid currentColor;opacity:.75;white-space:nowrap;">{_vis_tag}</span>')
 
         # Layer annotation folded into the Structure column, e.g. "Fund (2L)".
         # Shown for any deal (buy or sell) that carries a recognized layers value;
