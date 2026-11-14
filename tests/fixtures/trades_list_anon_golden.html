@@ -1,0 +1,1477 @@
+
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        
+        <!-- Google tag (gtag.js) -->
+        <script async src="https://www.googletagmanager.com/gtag/js?id=G-L9JN3TRR2S"></script>
+        <script>
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){dataLayer.push(arguments);}
+          gtag('js', new Date());
+          gtag('config', 'G-L9JN3TRR2S');
+        </script>
+        
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Indications · Gracia Group</title>
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>">
+        <link rel="icon" type="image/png" href="https://pre-ipo.graciagroup.com/favicon.png">
+        <link rel="apple-touch-icon" href="https://pre-ipo.graciagroup.com/favicon.png">
+        <link rel="stylesheet" href="https://s3.us-east-1.amazonaws.com/main.css/master.css">
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 20px;
+            }
+            .header {
+                display: block;  /* stack title above filters (override master.css flex) */
+                background-color: #f8f9fa;
+                padding: 10px 20px;
+                border-radius: 5px;
+                margin-bottom: 20px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .title-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 24px;
+                flex-wrap: wrap;
+                margin-bottom: 4px;
+            }
+            .title-row h1 {
+                margin: 0;
+            }
+            .filter-section {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 10px 0;
+                margin-bottom: 10px;
+            }
+            .filter-group {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 2px 22px;
+                border-left: 1px solid var(--border-strong, #cdc9c0);
+            }
+            .filter-group:first-child {
+                padding-left: 0;
+                border-left: none;
+            }
+            .filter-label {
+                font-weight: bold;
+                margin-right: 5px;
+                position: relative;
+                top: -1px;
+            }
+            .fund-group {
+                display: inline-flex;
+                align-items: center;
+            }
+            .fund-group .checkbox-label {
+                margin-right: 0;
+            }
+            .sub-filter {
+                margin-left: 6px;
+            }
+            .sub-filter.disabled {
+                opacity: 0.45;
+            }
+            .unconfirmed-icon {
+                margin-left: 4px;
+                color: #b45309;
+                font-size: 12px;
+                vertical-align: middle;
+                cursor: help;
+            }
+            .layer-badge {
+                color: #6b7280;
+                font-weight: 600;
+                white-space: nowrap;
+            }
+            h1 {
+                color: #2c3e50;
+                margin: 0 0 4px 0;
+                font-size: 28px;
+                font-weight: 700;
+                letter-spacing: -0.01em;
+            }
+            .subtitle {
+                margin: 0 0 16px 0;
+                padding-bottom: 12px;
+                border-bottom: 2px solid #e0e0e0;
+                font-style: italic;
+                font-size: 15px;
+                color: #6b7280;
+            }
+            table {
+                border-collapse: collapse;
+                width: 100%;
+                margin-bottom: 20px;
+            }
+
+            th, td {
+                border: 1px solid #ddd;
+                padding: 12px 6px;
+                text-align: left;
+            }
+
+            tr:nth-child(even) {
+                background-color: #f9f9f9;
+            }
+
+            thead {
+                position: sticky;
+                top: 0;
+                z-index: 10;
+            }
+
+            thead tr {
+                background-color: #f8f9ff;
+            }
+
+            thead th {
+                background-color: #f8f9ff;
+                border-bottom: 3px double #ddd;
+                position: sticky;
+                top: 0;
+                font-weight: bold;
+                color: #2c3e50;
+            }
+
+            tr:hover {
+                background-color: #f5f5f5;
+            }
+
+            .copy-id {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 22px;
+                height: 22px;
+                margin-top: 5px;
+                padding: 0;
+                background-color: #fff;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                color: #6b7280;
+                cursor: pointer;
+                line-height: 0;
+            }
+
+            .copy-id svg {
+                width: 13px;
+                height: 13px;
+                fill: none;
+                stroke: currentColor;
+                stroke-width: 1.5;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+            }
+
+            .copy-id:hover {
+                border-color: var(--accent, #3d5a73);
+                color: var(--accent, #3d5a73);
+            }
+
+            .copy-id.copied {
+                border-color: #16a34a;
+                color: #16a34a;
+            }
+
+            .stage-cell {
+                position: relative;
+                cursor: help;
+            }
+
+            .stage-cell:hover::after {
+                content: attr(data-tooltip);
+                position: absolute;
+                bottom: 100%;
+                left: 50%;
+                transform: translateX(-50%);
+                padding: 5px 10px;
+                background-color: var(--accent, #3d5a73);
+                color: white;
+                border-radius: 4px;
+                font-size: 14px;
+                white-space: nowrap;
+                z-index: 20;
+            }
+            
+            .topbar {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 10px;
+                margin-bottom: 10px;
+            }
+            .topnav {
+                display: flex;
+                align-items: center;
+                flex-wrap: nowrap;
+                gap: 12px;
+                padding: 10px 0;
+                margin-bottom: 10px;
+                border-bottom: 1px solid #ddd;
+            }
+            .nav-brand {
+                display: inline-block;
+                background-color: #eef2f6;
+                border: 1px solid #d7dee6;
+                border-radius: 999px;
+                padding: 7px 11px;
+                font-size: 13.5px;
+                font-weight: 700;
+                color: var(--accent, #3d5a73);
+                text-decoration: none;
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+            .nav-tabs {
+                display: flex;
+                align-items: center;
+                flex-wrap: nowrap;
+                gap: 6px;
+                flex: 1;
+                min-width: 0;
+            }
+            .nav-tab {
+                display: inline-block;
+                background-color: #fff;
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                padding: 7px 11px;
+                font-size: 13.5px;
+                font-weight: 600;
+                color: var(--ink);
+                text-decoration: none;
+                white-space: nowrap;
+            }
+            /* Allow wrapping below 1080px. The one-row nav (admin search icon + 2-digit auction count) needs ~954px, so it wraps only when it must. */
+            @media (max-width: 1080px) {
+                .topnav {
+                    flex-wrap: wrap;
+                }
+                .nav-tabs {
+                    flex-wrap: wrap;
+                    min-width: auto;
+                }
+            }
+            .nav-addorder {
+                flex-shrink: 0;
+            }
+            .nav-tab:hover {
+                background-color: #f0f0f0;
+            }
+            .nav-tab-active,
+            .nav-tab-active:hover {
+                background-color: #1a1a1a;
+                border-color: #1a1a1a;
+                color: #fff;
+            }
+            .nav-tab-disabled {
+                color: #999;
+                cursor: default;
+            }
+            .nav-tab-disabled:hover {
+                background-color: #fff;
+            }
+            .btn.nav-signin {
+                background-color: #fff;
+                color: var(--ink);
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                padding: 8px 16px;
+                font-size: 14px;
+                font-weight: 600;
+                white-space: nowrap;
+                margin-bottom: 0;
+                margin-left: auto;
+            }
+            .btn.nav-signin:hover {
+                background-color: #f0f0f0;
+            }
+            .nav-icon-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 34px;
+                height: 34px;
+                background-color: #fff;
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                color: var(--ink);
+                cursor: pointer;
+                padding: 0;
+            }
+            .nav-icon-btn:hover {
+                background-color: #f0f0f0;
+            }
+            .deal-switcher-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0,0,0,0.5);
+                z-index: 2000;
+                padding-top: 12vh;
+            }
+            .deal-switcher-overlay.show {
+                display: block;
+            }
+            .deal-switcher-box {
+                background-color: #fff;
+                margin: 0 auto;
+                width: 90%;
+                max-width: 560px;
+                border-radius: 8px;
+                box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+                overflow: hidden;
+                font-family: Arial, sans-serif;
+            }
+            .deal-switcher-input {
+                width: 100%;
+                box-sizing: border-box;
+                border: none;
+                border-bottom: 1px solid #ddd;
+                padding: 16px 18px;
+                font-size: 16px;
+                font-family: inherit;
+                outline: none;
+            }
+            .deal-switcher-results {
+                max-height: 50vh;
+                overflow-y: auto;
+            }
+            .deal-switcher-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                padding: 10px 18px;
+                cursor: pointer;
+                font-size: 14px;
+                color: #333;
+            }
+            .deal-switcher-row.active {
+                background-color: #f0f4f8;
+            }
+            .deal-switcher-label {
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .deal-switcher-copy {
+                flex-shrink: 0;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 26px;
+                height: 26px;
+                background: none;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                color: #666;
+                padding: 0;
+            }
+            .deal-switcher-copy:hover {
+                background-color: #e2e6ea;
+                color: #333;
+            }
+            .deal-switcher-copy svg {
+                width: 14px;
+                height: 14px;
+                fill: none;
+                stroke: currentColor;
+                stroke-width: 1.3;
+            }
+            .deal-switcher-empty {
+                padding: 16px 18px;
+                color: #888;
+                font-size: 14px;
+            }
+            .navacct {
+                position: relative;
+                margin-left: auto;
+            }
+            .navacct-trigger {
+                display: inline-block;
+                background-color: #fff;
+                border: 1px solid #ddd;
+                border-radius: 999px;
+                padding: 8px 16px;
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--ink);
+                cursor: pointer;
+                white-space: nowrap;
+            }
+            .navacct-trigger:hover {
+                background-color: #f0f0f0;
+            }
+            .navacct-menu {
+                display: none;
+                position: absolute;
+                right: 0;
+                top: 100%;
+                margin-top: 6px;
+                background: #fff;
+                border-radius: 6px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                min-width: 220px;
+                padding: 6px 0;
+                z-index: 50;
+            }
+            .navacct:hover .navacct-menu, .navacct:focus-within .navacct-menu {
+                display: block;
+            }
+            .navacct-item {
+                display: block;
+                padding: 9px 16px;
+                font-size: 13px;
+                color: var(--ink);
+                text-decoration: none;
+                white-space: nowrap;
+            }
+            .navacct-item:hover {
+                background: #f4f4f4;
+            }
+            .navacct-static {
+                color: var(--text-secondary, #666);
+                font-weight: 600;
+                cursor: default;
+            }
+            .navacct-static:hover {
+                background: none;
+            }
+            .navacct-disabled {
+                color: #999;
+                cursor: default;
+            }
+            .navacct-disabled:hover {
+                background: none;
+            }
+            .btn {
+                display: inline-block;
+                padding: 10px 20px;
+                line-height: 1.2;
+                font-size: 15px;
+                text-decoration: none;
+                border-radius: 5px;
+                transition: background-color 0.3s, box-shadow 0.3s;  /* Added shadow transition */
+                margin-bottom: 10px;
+                border: none;  /* Remove border */
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);  /* Add subtle shadow */
+            }
+
+            .btn:hover {
+                box-shadow: 0 4px 8px rgba(0,0,0,0.2);  /* Slightly stronger shadow on hover */
+
+            }
+            .company-buttons {
+                margin-bottom: 20px;
+            }
+            .company-btn {
+                background-color: #CCDBEA;
+                border: none;
+                color: var(--ink);
+                font-weight: 500;
+                padding: 6px 14px;
+                margin: 3px;
+                border-radius: 999px;
+                font-size: 14px;
+                cursor: pointer;
+                transition: background-color 0.15s, color 0.15s;
+            }
+            .company-btn:hover {
+                background-color: #B7CBE1;
+            }
+            #highlightedCompanies, #nonHighlightedCompanies {
+                margin-left: -3px;
+            }
+            .company-btn.active {
+                background-color: #44576B; /* selected */
+                color: white; /* Keep text readable */
+            }
+
+            #disclaimer {
+                font-size: 0.9em;
+                color: #666;
+                margin-top: 30px;
+            }
+            .checkbox-label {
+                display: inline-flex;
+                align-items: center;
+                margin-right: 15px;
+                cursor: pointer;
+                white-space: nowrap;
+            }
+            .checkbox-label input {
+                margin-right: 5px;
+            }
+            input[type="checkbox"] {
+                accent-color: var(--accent, #3d5a73);
+            }
+            .slider-group .checkbox-label,
+            .bottom-filter-group .checkbox-label {
+                margin-right: 0;
+            }
+
+            .filter-row {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 16px;
+                width: 100%;
+            }
+
+            .slider-group {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+                flex-shrink: 0;
+                border: 1px solid #ddd;
+                padding: 10px;
+                border-radius: 4px;
+            }
+            .right-filters {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+            }
+
+            .bottom-filter-group {
+                border: 1px solid #ddd;
+                padding: 10px;
+                border-radius: 4px;
+                white-space: nowrap;
+            }
+
+            .spacer {
+                display: none;
+            }
+            .data-room-group {
+                position: absolute;
+                left: 50%;
+                transform: translateX(-50%);
+                border: 1px solid #ddd;
+                padding: 10px;
+                border-radius: 4px;
+            }
+
+            .highlighted-group {
+                margin-left: auto;
+                border: 1px solid #ddd;
+                padding: 10px;
+                border-radius: 4px;
+            }
+
+            .price-cell {
+                position: relative;
+                cursor: help;
+                color: #333;  /* Reset the text color to dark gray/black */
+            }
+
+            .price-cell:hover::after {
+                content: attr(data-valuation);
+                position: absolute;
+                bottom: 100%;
+                left: 50%;
+                transform: translateX(-50%);
+                padding: 5px 10px;
+                background-color: var(--accent, #3d5a73);
+                color: white;  /* This is for the tooltip text */
+                border-radius: 4px;
+                font-size: 14px;
+                white-space: nowrap;
+                z-index: 20;
+            }
+
+            .stage-cell {
+                position: relative;
+                cursor: help;
+                color: #333;  /* Reset the text color to dark gray/black */
+            }
+
+            .stage-cell:hover::after {
+                content: attr(data-tooltip);
+                position: absolute;
+                bottom: 100%;
+                left: 50%;
+                transform: translateX(-50%);
+                padding: 5px 10px;
+                background-color: var(--accent, #3d5a73);
+                color: white;  /* This is for the tooltip text */
+                border-radius: 4px;
+                font-size: 14px;
+                white-space: nowrap;
+                z-index: 20;
+            }
+            .ticket-size-filter {
+                margin-bottom: 20px;
+                padding: 15px;
+                background-color: #f8f9fa;
+                border-radius: 5px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+
+            .slider-container {
+                display: flex;
+                align-items: center;
+                gap: 15px;
+            }
+
+            #ticketSlider {
+                flex: 1;
+                max-width: 300px;
+            }
+            .company-filter {
+                background-color: #f8f9fa;
+                padding: 14px 20px;
+                border-radius: 5px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                margin-bottom: 15px; /* Add space below the company buttons */
+            }
+            .table-toolbar {
+                display: flex;
+                justify-content: flex-end;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin: 0 0 8px 0;
+            }
+            .toolbar-btn {
+                font-family: var(--font-ui);
+                background: #2e9d6a;
+                border: 1px solid #2e9d6a;
+                color: #fff;
+                font-size: 13px;
+                font-weight: 500;
+                padding: 6px 14px;
+                border-radius: 999px;
+                cursor: pointer;
+                transition: background-color 0.15s, border-color 0.15s;
+            }
+            .toolbar-btn:hover {
+                background-color: #237a52;
+                border-color: #237a52;
+            }
+            .company-filter > strong {
+                display: block;
+                margin-bottom: 8px;
+            }
+            .company-btn.show-all-btn {
+                background-color: transparent;
+                border: 1px solid var(--border-strong);
+                color: var(--text-secondary);
+            }
+            .company-btn.show-all-btn:hover {
+                background-color: rgba(0,0,0,0.04);
+            }
+
+            .toggle-btn {
+                display: inline-flex; /* Aligns with highlighted buttons */
+                align-items: center; /* Centers text vertically */
+                background-color: #e8f5e9; /* Light green background */
+                border: 1px solid #4CAF50; /* Subtle green border */
+                padding: 5px 10px;
+                margin: 2px; /* Keeps spacing consistent with company buttons */
+                border-radius: 3px;
+                cursor: pointer;
+                transition: background-color 0.3s, border 0.3s;
+                white-space: nowrap; /* Prevents text wrapping */
+                font-weight: bold; /* Makes text slightly stronger */
+                color: #2c3e50; /* Dark text for readability */
+            }
+
+            .toggle-btn:hover {
+                background-color: #d4edda; /* Slightly darker green on hover */
+                border-color: #388E3C; /* Darker green border */
+            }
+
+
+            .deal-count {
+                font-size: 28px;
+                color: #2c3e50;
+                font-weight: normal;
+                margin-left: 5px;
+                display: inline-block;
+            }
+
+            .highlighted-group {
+                display: flex;
+                align-items: center;
+            }
+            .modal {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0,0,0,0.5);
+                z-index: 1000;
+                opacity: 0;
+                transition: opacity 0.3s ease-in-out;
+            }
+
+            .modal-content {
+                background-color: white;
+                margin: 15% auto;
+                padding: 30px;
+                width: 80%;
+                max-width: 500px;
+                border-radius: 8px;
+                text-align: center;
+                position: relative;
+                transform: translateY(-20px);
+                transition: transform 0.3s ease-in-out;
+            }
+
+            .modal-buttons {
+                margin-top: 25px;
+            }
+
+            .modal-btn {
+                padding: 12px 25px;
+                border-radius: 5px;
+                border: none;
+                cursor: pointer;
+                font-size: 16px;
+                margin: 0 10px;
+            }
+
+            .primary-btn {
+                background-color: var(--accent, #3d5a73);
+                color: white;
+            }
+
+            .modal.show {
+                display: block;
+                opacity: 1;
+            }
+
+            .modal.show .modal-content {
+                transform: translateY(0);
+            }
+
+        </style>
+        <!-- Core application scripts -->
+        <script>
+            var selectedCompanies = [];
+
+            function formatDollarAmount(amount) {
+                if (amount >= 1000000) {
+                    return '$' + (amount / 1000000) + 'M';
+                } else {
+                    return '$' + (amount / 1000) + 'K';
+                }
+            }
+
+            function toggleCompanyFilter(company) {
+                var index = selectedCompanies.indexOf(company);
+                if (index > -1) {
+                    selectedCompanies.splice(index, 1);
+                    document.getElementById(company).classList.remove('active');
+                } else {
+                    selectedCompanies.push(company);
+                    document.getElementById(company).classList.add('active');
+                }
+                filterTable();
+                updateDealCount();
+            }
+
+            function toggleNonHighlighted() {
+                var section = document.getElementById("nonHighlightedCompanies");
+                var button = document.querySelector(".show-all-btn");
+
+                if (section.style.display === "none") {
+                    section.style.display = "block";
+                    button.innerHTML = "Hide All Companies ▲";
+                } else {
+                    section.style.display = "none";
+                    button.innerHTML = "Show All Companies ▼";
+                }
+            }
+
+            function updateDealCount() {
+                const visibleRows = Array.from(document.getElementsByClassName('deal-row')).filter(row => row.style.display !== 'none');
+                const countElement = document.getElementById('dealCount');
+                countElement.textContent = `(${visibleRows.length} deals)`;
+            }
+
+            function filterTable() {
+                var buyChecked = document.getElementById('buyFilter').checked;
+                var sellChecked = document.getElementById('sellFilter').checked;
+                var directChecked = document.getElementById('directFilter').checked;
+                var spvChecked = document.getElementById('spvFilter').checked;
+                var forwardChecked = document.getElementById('forwardFilter').checked;
+                var managementFeeChecked = document.getElementById('managementFeeFilter').checked;
+                var carryChecked = document.getElementById('carryFilter').checked;
+                var dataRoomChecked = document.getElementById('dataRoomFilter').checked;
+                var highlightedChecked = document.getElementById('highlightedFilter').checked;
+                var unconfirmedChecked = document.getElementById('unconfirmedFilter').checked;
+                var multiLayerOk = document.getElementById('multiLayerFilter').checked;
+                document.getElementById('multiLayerFilter').disabled = !spvChecked;
+                document.getElementById('multiLayerWrap').classList.toggle('disabled', !spvChecked);
+
+                var ticketBuckets = [];
+                var ticketCheckboxes = document.getElementsByClassName('ticket-filter');
+                for (var t = 0; t < ticketCheckboxes.length; t++) {
+                    if (ticketCheckboxes[t].checked) {
+                        var hiAttr = ticketCheckboxes[t].getAttribute('data-hi');
+                        ticketBuckets.push({
+                            lo: parseFloat(ticketCheckboxes[t].getAttribute('data-lo')) || 0,
+                            hi: (hiAttr === null || hiAttr === '') ? Infinity : parseFloat(hiAttr)
+                        });
+                    }
+                }
+                
+                var rows = document.getElementsByClassName('deal-row');
+                
+                for (var i = 0; i < rows.length; i++) {
+                    var row = rows[i];
+                    var type = row.classList.contains('buy') ? 'buy' : 'sell';
+                    var company = row.getAttribute('data-company');
+                    var isDirect = row.classList.contains('direct');
+                    var isSPV = row.classList.contains('fund');
+                    var isForward = row.classList.contains('forward');
+                    var managementFee = parseFloat(row.getAttribute('data-management-fee')) || 0;
+                    var carry = parseFloat(row.getAttribute('data-carry')) || 0;
+                    var stage = row.getAttribute('data-stage');
+                    var hasDataRoom = row.getAttribute('data-data-room') === 'Yes';
+                    var isHighlighted = row.getAttribute('data-highlighted') === 'Yes';
+                    var layers = (row.getAttribute('data-layers') || '').toLowerCase();
+                    var isMultiLayer = layers.indexOf('2-layer') !== -1 || layers.indexOf('3-layer') !== -1;
+                    var showLayer = multiLayerOk || !isMultiLayer;
+
+                    var showBroker = true;  // 'Available for Brokers' filter removed
+
+                    var showType = (buyChecked && type === 'buy') || (sellChecked && type === 'sell');
+                    // Rows with no structure class are structure-agnostic and always pass this filter.
+                    var noStructure = !isDirect && !isSPV && !isForward;
+                    var showStructure = noStructure || (directChecked && isDirect) || (spvChecked && isSPV) || (forwardChecked && isForward);
+                    var showFees = (managementFeeChecked || managementFee === 0) && (carryChecked || carry === 0);
+                    var showUnconfirmed = unconfirmedChecked || row.getAttribute('data-unconfirmed') !== 'Yes';
+                    
+                    var dealMin = parseFloat(row.cells[6].innerText.replace(/[^0-9.-]+/g,'')) || 0;
+                    var dealMax = parseFloat(row.cells[7].innerText.replace(/[^0-9.-]+/g,''));
+                    if (isNaN(dealMax) || dealMax <= 0) {
+                        dealMax = Infinity;
+                    }
+                    var showTicketSize = false;
+                    for (var b = 0; b < ticketBuckets.length; b++) {
+                        if (dealMin < ticketBuckets[b].hi && dealMax >= ticketBuckets[b].lo) {
+                            showTicketSize = true;
+                            break;
+                        }
+                    }
+                    
+                    var show = showType && showStructure && showFees && showUnconfirmed && 
+                              showTicketSize && 
+                              (!dataRoomChecked || hasDataRoom) &&
+                              (!highlightedChecked || isHighlighted) &&
+                              showBroker &&
+                              showLayer;
+                    
+                    if (selectedCompanies.length > 0 && selectedCompanies.indexOf(company) === -1) {
+                        show = false;
+                    }
+
+                    row.style.display = show ? '' : 'none';
+                }
+                updateDealCount();
+            }
+
+            // Deep-link support: ?company=NAME&side=bid|offer
+            document.addEventListener('DOMContentLoaded', function () {
+                var dlParams = new URLSearchParams(window.location.search);
+                var dlCompany = dlParams.get('company');
+                var dlSide = (dlParams.get('side') || '').toLowerCase();
+                var dlTouched = false;
+                var dlFiltered = false;
+
+                if (dlSide === 'bid' || dlSide === 'offer') {
+                    var dlBuyBox = document.getElementById('buyFilter');
+                    var dlSellBox = document.getElementById('sellFilter');
+                    if (dlBuyBox && dlSellBox) {
+                        dlBuyBox.checked = (dlSide === 'bid');
+                        dlSellBox.checked = (dlSide === 'offer');
+                        dlTouched = true;
+                    }
+                }
+
+                if (dlCompany) {
+                    var dlBtn = document.getElementById(dlCompany);
+                    if (dlBtn) {
+                        var dlHidden = document.getElementById('nonHighlightedCompanies');
+                        if (dlHidden && dlHidden.contains(dlBtn) && dlHidden.style.display === 'none') {
+                            toggleNonHighlighted();
+                        }
+                        if (selectedCompanies.indexOf(dlCompany) === -1) {
+                            toggleCompanyFilter(dlCompany);  // runs filterTable()
+                            dlTouched = false;
+                            dlFiltered = true;
+                        }
+                        dlBtn.scrollIntoView({block: 'center', behavior: 'smooth'});
+                    }
+                }
+
+                // Apply the default checkbox state once on load so the starting
+                // count matches what any later filter click shows.
+                if (!dlFiltered) {
+                    filterTable();
+                    updateDealCount();
+                }
+            });
+
+            var COPY_ICON_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"></path></svg>';
+            var CHECK_ICON_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8.5l3.5 3.5L13 5"></path></svg>';
+
+            function copyTextToClipboard(text) {
+                if (navigator.clipboard && window.isSecureContext) {
+                    return navigator.clipboard.writeText(text);
+                }
+                return new Promise(function (resolve, reject) {
+                    var ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.setAttribute('readonly', '');
+                    ta.style.position = 'fixed';
+                    ta.style.top = '-1000px';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    var ok = false;
+                    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+                    document.body.removeChild(ta);
+                    ok ? resolve() : reject(new Error('Copy failed'));
+                });
+            }
+
+            document.addEventListener('click', function (event) {
+                var btn = event.target.closest ? event.target.closest('.copy-id') : null;
+                if (!btn) return;
+                event.preventDefault();
+                var dealId = btn.getAttribute('data-copy-id');
+                copyTextToClipboard(dealId).then(function () {
+                    btn.classList.add('copied');
+                    btn.innerHTML = CHECK_ICON_SVG;
+                    btn.title = 'Copied ' + dealId;
+                    clearTimeout(btn._copyTimer);
+                    btn._copyTimer = setTimeout(function () {
+                        btn.classList.remove('copied');
+                        btn.innerHTML = COPY_ICON_SVG;
+                        btn.title = 'Copy deal ID';
+                    }, 1500);
+                }).catch(function () {
+                    btn.title = 'Copy failed';
+                });
+            });
+
+            document.addEventListener('DOMContentLoaded', function () {
+                    function getCookie(name) {
+                        const value = `; ${document.cookie}`;
+                        const parts = value.split(`; ${name}=`);
+                        if (parts.length === 2) return parts.pop().split(';').shift();
+                    }
+
+                    const params = new URLSearchParams(window.location.search);
+                    const isAdmin = false;
+
+                    if (isAdmin) {
+                        document.querySelectorAll('.nudge-bell').forEach(function(b) {
+                            var ts = localStorage.getItem('nudge_' + b.getAttribute('data-deal-id'));
+                            if (ts && (Date.now() - parseInt(ts, 10)) < 2592000000) return;
+                            b.style.display = 'inline-block';
+                            var br = b.previousElementSibling;
+                            if (br && br.tagName === 'BR') br.style.display = 'inline';
+                        });
+                        document.querySelectorAll('.loi-send').forEach(function(a) {
+                            var ts = localStorage.getItem('loi_' + a.getAttribute('data-deal-id'));
+                            if (ts && (Date.now() - parseInt(ts, 10)) < 2592000000) return;
+                            a.style.display = 'inline-block';
+                            var td = a.closest('td');
+                            var br = td ? td.querySelector('.nudge-br') : null;
+                            if (br) br.style.display = 'inline';
+                        });
+                    }
+
+                    const cognitoCookie = getCookie('CognitoIdentityServiceProvider');
+                    const hasAuthCode = params.get('code');
+
+                    if (!isAdmin && !cognitoCookie && !hasAuthCode) {
+                        const modal = document.getElementById('authModal');
+                        if (modal) {
+                            modal.classList.add('show', 'modal-force');
+                            const tableElement = document.querySelector('table');
+                            if (tableElement) {
+                                tableElement.style.display = 'none';
+                            }
+                        }
+                    }
+
+                    updateDealCount();
+                });
+        </script>
+
+        <!-- PDF Generation Libraries and Script -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+        <script>
+            window.jsPDF = window.jspdf.jsPDF;
+
+            function downloadPDF() {
+                const doc = new jsPDF('l', 'pt', 'a4'); // Landscape mode, points, A4 size
+                const pageWidth = doc.internal.pageSize.width;
+                const margin = 10; // Reduce margin to maximize width
+                
+                // Generate filename based on active filters
+                let filename = 'GraciaGroup';
+                
+                // Add deal type to filename if filtered
+                const buyChecked = document.getElementById('buyFilter').checked;
+                const sellChecked = document.getElementById('sellFilter').checked;
+                if (buyChecked && !sellChecked) {
+                    filename += '-bids';
+                } else if (sellChecked && !buyChecked) {
+                    filename += '-offers';
+                }
+                
+                // Add structure to filename if filtered
+                const directChecked = document.getElementById('directFilter').checked;
+                const spvChecked = document.getElementById('spvFilter').checked;
+                const forwardChecked = document.getElementById('forwardFilter').checked;
+                
+                let structures = [];
+                if (directChecked) structures.push('direct');
+                if (spvChecked) structures.push('spv');
+                if (forwardChecked) structures.push('forward');
+                
+                // Only add structures if not all are checked (which means no filtering)
+                if (structures.length > 0 && structures.length < 3) {
+                    filename += '-' + structures.join('-');
+                }
+
+                // Add company filter if any
+                if (selectedCompanies.length > 0) {
+                    if (selectedCompanies.length <= 3) {
+                        // If 3 or fewer companies, include their names
+                        filename += '-' + selectedCompanies.join('-').replace(/\s+/g, '_');
+                    } else {
+                        // If more than 3, just indicate the count
+                        filename += `-${selectedCompanies.length}companies`;
+                    }
+                }
+                
+                // Add date for versioning
+                const today = new Date();
+                const dateStr = today.toISOString().split('T')[0]; // YYYY-MM-DD format
+                filename += `-${dateStr}`;
+                
+                // Clean up filename - replace spaces and special characters
+                filename = filename.replace(/[^\w-]/g, '_').toLowerCase();
+
+                function addHeaderAndFooter() {
+                    doc.setFontSize(10);
+                    doc.setTextColor(52, 152, 219);
+                    doc.text('Prepared by Chad Gracia • cgracia@rainmakersecurities.com • +1-917-549-8969', margin, 20);
+                    
+                    doc.setFontSize(8);
+                    doc.setTextColor(127, 140, 141);
+                    doc.text('To see full interactive report, visit: https://trades.graciagroup.com/', margin, doc.internal.pageSize.height - 20);
+                }
+
+                try {
+                    doc.setFont("helvetica");
+                    doc.setFontSize(22);
+                    doc.setTextColor(44, 62, 80);
+                    doc.text('Private Secondary Indications', margin, 50);
+                    
+                    doc.setFontSize(12);
+                    doc.setTextColor(127, 140, 141);
+                    doc.text(`Generated: ${new Date().toLocaleString()}`, margin, 70);
+
+                    const visibleRows = Array.from(document.querySelectorAll('.deal-row'))
+                        .filter(row => row.style.display !== 'none')
+                        .map(row => Array.from(row.cells).map((cell, i) => {
+                            // Deal ID and Updated carry extra controls (copy
+                            // button; nudge/LOI links). Take only the leading
+                            // text so those never land in the export. Read the
+                            // first child rather than splitting innerText:
+                            // innerText collapses to textContent while the
+                            // table is display:none for signed-out visitors,
+                            // which used to leak the 🔔/✍️ glyphs through.
+                            if (i === 0 || i === 12) {
+                                var lead = cell.firstChild ? cell.firstChild.textContent : cell.innerText;
+                                return (lead || '').trim();
+                            }
+                            return cell.innerText;
+                        }));
+
+                    const columns = [
+                        'Deal ID', 'Type', 'Company', 'Structure', 'Net', 'Gross', 
+                        'Min Size', 'Max Size', 'LR PPS',
+                        'LR Val (Bn)', 'Man. Fee', 'Carry', 'Updated'
+                    ];
+                    
+                    doc.autoTable({
+                        startY: 100,
+                        head: [columns],
+                        body: visibleRows,
+                        styles: {
+                            fontSize: 9,
+                            cellPadding: 4,
+                        },
+                        headStyles: {
+                            fillColor: [44, 62, 80],
+                            fontSize: 10,
+                            halign: 'center',
+                            textColor: [255, 255, 255] // White text on dark header
+                        },
+                        margin: { left: 20, right: 20 }, // Keeps table within margins
+                        tableWidth: "auto", // Automatically adjusts column widths
+                        didDrawPage: function(data) {
+                            addHeaderAndFooter();
+                        }
+                    });
+
+                    doc.addPage();
+                    doc.setFontSize(14);
+                    doc.setTextColor(44, 62, 80);
+                    doc.text('DISCLAIMER', margin, 50);
+                    
+                    doc.setFontSize(10);
+                    doc.setTextColor(127, 140, 141);
+                    const disclaimer = document.getElementById('disclaimer').innerText;
+                    const splitDisclaimer = doc.splitTextToSize(disclaimer, pageWidth - (margin * 2));
+                    doc.text(splitDisclaimer, margin, 70);
+
+                    addHeaderAndFooter();
+                    
+                    doc.save(`${filename}.pdf`);
+                    
+                } catch (error) {
+                    console.error("Error generating PDF:", error);
+                }
+            }
+
+        </script>
+    </head>
+    <body>
+        <nav class="topnav"><a href="https://www.graciagroup.com" class="nav-brand">Gracia Group</a><div class="nav-tabs"><a href="https://trades.graciagroup.com/" class="nav-tab nav-tab-active" aria-current="page">Indications</a><a href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&scope=openid+email&redirect_uri=https://trades.graciagroup.com&state=aHR0cHM6Ly9kZXNrLmdyYWNpYWdyb3VwLmNvbS8" class="nav-tab">Portfolio &amp; Watchlist</a><a href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&scope=openid+email&redirect_uri=https://trades.graciagroup.com&state=aHR0cHM6Ly9kZXNrLmdyYWNpYWdyb3VwLmNvbS8_dmlldz1kZW1hbmQ" class="nav-tab">Demand Board</a></div><button type="button" id="dealSwitcherBtn" class="nav-icon-btn" title="Switch deal (Ctrl+K)" aria-label="Switch deal"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><circle cx="6.5" cy="6.5" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4"></circle><line x1="9.8" y1="9.8" x2="14" y2="14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></line></svg></button><a href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login?client_id=71vrglkidm13jb73u7nje3d1t2&amp;response_type=code&amp;scope=openid+email&amp;redirect_uri=https://trades.graciagroup.com&amp;state=aHR0cHM6Ly9kZXNrLmdyYWNpYWdyb3VwLmNvbS91cGRhdGUvP2FjdGlvbj1uZXc" class="nav-tab nav-addorder" title="Post a buy or sell order">+ Add order</a><a href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&scope=openid+email&redirect_uri=https://trades.graciagroup.com&state=aHR0cHM6Ly90cmFkZXMuZ3JhY2lhZ3JvdXAuY29tLw" class="btn nav-signin">Sign In</a></nav>
+
+        <div class="header">
+            <div class="title-row">
+                <h1>Indications for Accredited Investors <span id="dealCount" class="deal-count"></span></h1>
+            </div>
+            <p class="subtitle">Search our full book of live private securities opportunities.</p>
+            <div class="filter-section">
+                <div class="filter-group">
+                    <span class="filter-label">Type:</span>
+                    <label class="checkbox-label"><input type="checkbox" id="buyFilter" checked onchange="filterTable()">Show Bids</label>
+                    <label class="checkbox-label"><input type="checkbox" id="sellFilter" checked onchange="filterTable()">Show Offers</label>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-label">Structure:</span>
+                    <label class="checkbox-label"><input type="checkbox" id="directFilter" checked onchange="filterTable()"> Direct</label>
+                    <label class="checkbox-label"><input type="checkbox" id="forwardFilter" checked onchange="filterTable()"> Forward</label>
+                    <span class="fund-group">
+                        <label class="checkbox-label"><input type="checkbox" id="spvFilter" checked onchange="filterTable()"> Fund</label>
+                        <span class="sub-filter" id="multiLayerWrap">(<label class="checkbox-label"><input type="checkbox" id="multiLayerFilter" checked onchange="filterTable()"> Multi-Layer</label>)</span>
+                    </span>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-label">Fees:</span>
+                    <label class="checkbox-label"><input type="checkbox" id="managementFeeFilter" checked onchange="filterTable()"> Management</label>
+                    <label class="checkbox-label"><input type="checkbox" id="carryFilter" checked onchange="filterTable()"> Carry</label>
+                </div>
+            </div>
+        </div>
+        <div class="ticket-size-filter">
+            <div class="filter-row">
+                <div class="slider-group">
+                    <span class="filter-label">Ticket Size:</span>
+                    <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="0" data-hi="250000" checked onchange="filterTable()"> &lt;$250K</label>
+                    <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="250000" data-hi="500000" checked onchange="filterTable()"> $250K–$500K</label>
+                    <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="500000" data-hi="1000000" checked onchange="filterTable()"> $500K–$1M</label>
+                    <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="1000000" data-hi="5000000" checked onchange="filterTable()"> $1M–$5M</label>
+                    <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="5000000" data-hi="" checked onchange="filterTable()"> $5M+</label>
+                </div>
+                <div class="right-filters">
+                    <div class="bottom-filter-group">
+                        <label class="checkbox-label"><input type="checkbox" id="dataRoomFilter" onchange="filterTable()"> Data Room</label>
+                    </div>
+                    <div class="spacer"></div>
+                    <div class="bottom-filter-group">
+                        <label class="checkbox-label"><input type="checkbox" id="highlightedFilter" onchange="filterTable()"> Highlighted Deals</label>
+                    </div>
+                    <div class="spacer"></div>
+                    <div class="bottom-filter-group">
+                        <label class="checkbox-label"><input type="checkbox" id="unconfirmedFilter" checked onchange="filterTable()"> Show unconfirmed</label>
+                    </div>
+                </div>
+            </div>
+            </div>
+        </div>
+
+        <div class="company-filter">
+            <strong>Highlighted Companies:</strong>
+
+            <!-- Always visible: Highlighted Companies -->
+            <div id="highlightedCompanies">
+                <button class='company-btn' id="Acme" onclick="toggleCompanyFilter('Acme')">Acme</button>
+                <button class="company-btn show-all-btn" onclick="toggleNonHighlighted()">Show All Companies ▼</button>
+            </div>
+
+            <div id="nonHighlightedCompanies" style="display: none;">
+                <button class='company-btn' id="Bolt" onclick="toggleCompanyFilter('Bolt')">Bolt</button>
+            </div>
+
+        </div>
+
+        <div class="table-toolbar">
+            <button class="toolbar-btn" onclick="location.reload()">Show All</button>
+            <button class="toolbar-btn" onclick="downloadPDF()">Download Selected Deals</button>
+        </div>
+
+        <table id="dealsTable">
+            <thead>
+                <tr>
+                    <th>Deal ID</th>
+                    <th>Type</th>
+                    <th>Company</th>
+                    <th>Structure</th>
+                    <th>Net</th>
+                    <th>Gross</th>
+                    <th title="Minimum allocation size">Min Size</th>
+                    <th title="Maximum allocation size">Max Size</th>
+                    <th title="Last round price per share">LR PPS</th>
+                    <th title="Last round valuation, in $ billions">LR Val (Bn)</th>
+                    <th>Man. Fee</th>
+                    <th>Carry</th>
+                    <th>Updated</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+        <tr class="deal-row sell order fund" data-deal-id="501" data-management-fee="2.25%" data-carry="15.5%" data-stage="Firm" data-data-room="Yes" data-highlighted="Yes" data-layers="2-Layer SPV" data-company="Acme" data-unconfirmed="No">
+            <td><a href="https://trades.graciagroup.com/deal/501">501</a><br><button type="button" class="copy-id" data-copy-id="501" title="Copy deal ID" aria-label="Copy deal ID 501"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"></path></svg></button></td>
+            <td>Sell Order</td>
+            <td>Acme</td>
+            <td>Fund (SPV) <span class="layer-badge" title="2-Layer SPV">(2L)</span></td>
+            <td class="price-cell" data-valuation="($6.2Bn)">$41.13</td>
+            <td class="price-cell" data-valuation="($6.5Bn)">$43.31</td>
+            <td>$312,000</td>
+            <td>$913,000</td>
+            <td>$20.00</td>
+            <td>$3.00</td>
+            <td>2.25%</td>
+            <td>15.5%</td>
+            <td style="text-align:center;">100d+</td>
+        </tr>
+        
+        <tr class="deal-row buy order direct" data-deal-id="502" data-management-fee="0" data-carry="0" data-stage="Inquiry" data-data-room="No" data-highlighted="No" data-layers="" data-company="Bolt" data-unconfirmed="No">
+            <td><a href="https://trades.graciagroup.com/deal/502">502</a><br><button type="button" class="copy-id" data-copy-id="502" title="Copy deal ID" aria-label="Copy deal ID 502"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"></path></svg></button></td>
+            <td>Buy Order</td>
+            <td>Bolt</td>
+            <td>Direct</td>
+            <td class="price-cell" data-valuation=""></td>
+            <td class="price-cell" data-valuation="($7.7Bn)">$57.75</td>
+            <td>$123,000</td>
+            <td>$321,000</td>
+            <td>$30.00</td>
+            <td>$4.00</td>
+            <td>0</td>
+            <td>0</td>
+            <td style="text-align:center;">100d+</td>
+        </tr>
+        
+            </tbody>
+        </table>
+        
+        <div id="disclaimer">
+            <p>DISCLOSURE: Chad Gracia (“Gracia”) is a principal of The Gracia Group, LLC (“Gracia Group”) and a registered agent of Rainmaker Securities, LLC (“RMS”). Gracia Group is a consulting firm and outside business activity of Gracia. Gracia Group is not affiliated with RMS. Rainmaker Securities, LLC (“RMS”) is a FINRA registered broker-dealer and SIPC member. Find this broker-dealer and its agents on BrokerCheck. Our relationship summary can be found on the RMS website.</p>
+            <p>RMS is engaged by its clients to make referrals to buyers or sellers of private securities (“Securities”). If such client closes a Securities transaction with a buyer or seller so referred, RMS is entitled to a success fee from the client. Such success fee may be in the form of cash or in warrants to purchase securities of the client or client's affiliate. RMS or RMS representatives may hold equity in its issuer clients or in the issuers of securities purchased or sold by the parties to a transaction.</p>
+            <p>This communication is confidential and is addressed only to its intended recipient. This communication does not represent an offer or solicitation to buy or sell Securities. Such an offer must be made via definitive legal documentation by the seller of securities.</p>
+            <p>Investments in the Securities are speculative and involve a high degree of risk. An investor in the Securities should have little to no need for liquidity in the foreseeable future and have sufficient finances to withstand the loss of the entire investment.</p>
+            <p>RMS does not recommend the purchase or sale of Securities. Potential buyers or sellers of the Securities should seek professional counsel prior to entering into any transaction.</p>
+            <p>Chad Gracia is a registered agent of Rainmaker Securities, LLC (“RMS”) and a principal of Gracia Group. RMS is a FINRA registered broker-dealer and SIPC member. Find RMS and its agents on BrokerCheck. The RMS relationship summary can be found on the RMS website.  RMS is not an affiliate of Gracia Group. All securities transactions conducted by Chad Gracia will be conducted via RMS.</p>
+        </div>
+        <div id="authModal" class="modal">
+            <div class="modal-content">
+                <h2>Private Secondary Indications</h2>
+                <p>This platform provides research and pricing for accredited investors.</p>
+                <div class="modal-buttons">
+                    <a href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/login?client_id=71vrglkidm13jb73u7nje3d1t2&response_type=code&scope=openid+email&redirect_uri=https://trades.graciagroup.com" 
+                        class="modal-btn primary-btn">Sign In or Register</a>
+                </div>
+            </div>
+        </div>
+        
+        <div id="dealSwitcherModal" class="deal-switcher-overlay">
+            <div class="deal-switcher-box">
+                <input type="text" id="dealSwitcherInput" class="deal-switcher-input" placeholder="Search a company&hellip;" autocomplete="off" spellcheck="false">
+                <div id="dealSwitcherResults" class="deal-switcher-results"></div>
+            </div>
+        </div>
+        <script>
+        (function () {
+            var cache = null;
+            var modal = document.getElementById('dealSwitcherModal');
+            var input = document.getElementById('dealSwitcherInput');
+            var results = document.getElementById('dealSwitcherResults');
+            var btn = document.getElementById('dealSwitcherBtn');
+            var rows = [];
+            var idx = -1;
+
+            function fmtSize(v) {
+                if (v === null || v === undefined || v === '') return '';
+                var n = Number(v);
+                if (!isFinite(n)) return '';
+                if (n >= 1000000) {
+                    var m = Math.round((n / 1000000) * 10) / 10;
+                    return '$' + (m % 1 === 0 ? m.toFixed(0) : m) + 'M';
+                }
+                if (n >= 1000) return '$' + Math.round(n / 1000) + 'K';
+                return '$' + Math.round(n);
+            }
+            function fmtRange(lo, hi) {
+                var a = fmtSize(lo), b = fmtSize(hi);
+                if (a && b) return a === b ? a : (a + '\u2013' + b);
+                return a || b || '';
+            }
+            function esc(s) {
+                return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) {
+                    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+                });
+            }
+            function renderRows(list) {
+                rows = list;
+                idx = list.length ? 0 : -1;
+                if (!list.length) {
+                    results.innerHTML = '<div class="deal-switcher-empty">No matching deals.</div>';
+                    return;
+                }
+                results.innerHTML = list.map(function (d, i) {
+                    var label = d.status !== undefined
+                        ? esc(d.company) + ' &middot; ' + esc(d.side) + ' ' + esc(fmtRange(d.size_min, d.size_max)) + ' &middot; ' + esc(d.status)
+                        : [d.company, d.side, d.net,
+                           d.min_size && d.max_size && d.min_size !== d.max_size ? d.min_size + '\u2013' + d.max_size : (d.min_size || d.max_size)
+                          ].filter(Boolean).map(esc).join(' &middot; ');
+                    return '<div class="deal-switcher-row' + (i === 0 ? ' active' : '') + '" data-idx="' + i + '" data-id="' + esc(d.id) + '">' +
+                        '<span class="deal-switcher-label">' + label + '</span>' +
+                        '<button type="button" class="deal-switcher-copy" data-id="' + esc(d.id) + '" title="Copy link" aria-label="Copy link">' + COPY_ICON_SVG + '</button>' +
+                        '</div>';
+                }).join('');
+            }
+            function setActive(newIdx) {
+                var rowEls = results.querySelectorAll('.deal-switcher-row');
+                if (!rowEls.length) return;
+                idx = Math.max(0, Math.min(newIdx, rowEls.length - 1));
+                rowEls.forEach(function (el, i) {
+                    el.classList.toggle('active', i === idx);
+                });
+                rowEls[idx].scrollIntoView({block: 'nearest'});
+            }
+            function applyFilter() {
+                var q = input.value.trim().toLowerCase();
+                var list = !cache ? [] : (!q ? cache : cache.filter(function (d) {
+                    return (d.company || '').toLowerCase().indexOf(q) !== -1;
+                }));
+                renderRows(list);
+            }
+            function goToDeal(id) {
+                window.location.href = 'https://trades.graciagroup.com/deal/' + encodeURIComponent(id);
+            }
+            function openModal() {
+                modal.classList.add('show');
+                input.value = '';
+                results.innerHTML = '';
+                setTimeout(function () { input.focus(); }, 0);
+                if (cache) {
+                    renderRows(cache);
+                    return;
+                }
+                results.innerHTML = '<div class="deal-switcher-empty">Loading&hellip;</div>';
+                fetch('/?view=public-deal-index', {credentials: 'same-origin'})
+                    .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); })
+                    .then(function (data) {
+                        cache = (data || []).slice().sort(function (a, b) {
+                            return new Date(b.updated || 0) - new Date(a.updated || 0);
+                        });
+                        renderRows(cache);
+                    })
+                    .catch(function () {
+                        results.innerHTML = '<div class="deal-switcher-empty">Failed to load deals.</div>';
+                    });
+            }
+            function closeModal() {
+                modal.classList.remove('show');
+            }
+
+            if (btn) btn.addEventListener('click', openModal);
+            document.addEventListener('keydown', function (e) {
+                if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+                    e.preventDefault();
+                    openModal();
+                    return;
+                }
+                if (!modal.classList.contains('show')) return;
+                if (e.key === 'Escape') {
+                    closeModal();
+                } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setActive(idx + 1);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setActive(idx - 1);
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (idx >= 0 && rows[idx]) goToDeal(rows[idx].id);
+                }
+            });
+            input.addEventListener('input', applyFilter);
+            modal.addEventListener('click', function (e) {
+                if (e.target === modal) closeModal();
+            });
+            results.addEventListener('click', function (e) {
+                var copyBtn = e.target.closest ? e.target.closest('.deal-switcher-copy') : null;
+                if (copyBtn) {
+                    e.stopPropagation();
+                    var id = copyBtn.getAttribute('data-id');
+                    copyTextToClipboard('https://trades.graciagroup.com/deal/' + id).then(function () {
+                        copyBtn.innerHTML = CHECK_ICON_SVG;
+                        copyBtn.title = 'Copied';
+                        clearTimeout(copyBtn._copyTimer);
+                        copyBtn._copyTimer = setTimeout(function () {
+                            copyBtn.innerHTML = COPY_ICON_SVG;
+                            copyBtn.title = 'Copy link';
+                        }, 1200);
+                    });
+                    return;
+                }
+                var row = e.target.closest ? e.target.closest('.deal-switcher-row') : null;
+                if (row) goToDeal(row.getAttribute('data-id'));
+            });
+            results.addEventListener('mousemove', function (e) {
+                var row = e.target.closest ? e.target.closest('.deal-switcher-row') : null;
+                if (!row) return;
+                setActive(parseInt(row.getAttribute('data-idx'), 10));
+            });
+        })();
+        </script>
+    
+    </body>
+    </html>
+    

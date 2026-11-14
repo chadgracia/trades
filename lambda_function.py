@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 import threading
 import base64
@@ -202,6 +203,758 @@ def _syndicate_eligible_emails():
         logger.warning(f"Syndicate tenants fetch failed (non-fatal): {e}")
     _syndicate_tenant_cache["emails"] = emails
     return emails
+
+
+# people-slim.json reader: same code as CRMDealDetails _people_slim_status_index.
+PEOPLE_SLIM_BUCKET = "full-pipeline-cache"
+PEOPLE_SLIM_KEY = "syndicate-dash/people-slim.json"
+PEOPLE_SLIM_TTL_SECONDS = 15 * 60
+KYC_FIELD = "custom_label_3796440"            # CEF/ID: Yes 6600515, N/A 6600516
+KYC_OK_IDS = {"6600515", "6600516"}
+ACCREDITATION_FIELD = "custom_label_3763008"  # IQF Status: Yes 6496840, Unnecessary 6596073
+ACCREDITATION_OK_IDS = {"6496840", "6596073"}
+INVESTOR_LEVEL_FIELD = "custom_label_3923758"  # Investor Level (deal gate)
+_people_slim_cache = {"etag": None, "checked_at": 0.0, "by_id": None, "by_email": None,
+                      "dg_by_id": None, "last_modified": None}
+
+
+def _person_emails(p):
+    """Lowercased emails on a person record: every top-level email* field
+    (string, list of strings, or list of {"email": ...} dicts)."""
+    out = set()
+    for k, v in p.items():
+        if not isinstance(k, str) or not k.lower().startswith("email"):
+            continue
+        for item in (v if isinstance(v, list) else [v]):
+            if isinstance(item, dict):
+                item = item.get("email") or item.get("address") or item.get("value")
+            if isinstance(item, str) and "@" in item:
+                out.add(item.strip().lower())
+    return out
+
+
+def _cf_option_ids(value):
+    """A custom-field value (single id, list, or {"id": ...} dicts) as a set of id strings."""
+    if value is None:
+        return set()
+    out = set()
+    for item in (value if isinstance(value, list) else [value]):
+        if isinstance(item, dict):
+            item = item.get("option_id") or item.get("id") or item.get("value")
+        if item not in (None, ""):
+            out.add(str(item).split(".")[0])
+    return out
+
+
+def _dg_person_slim(p, cf):
+    """(investor level ids, first name, full name, company, emails) for the deal gate."""
+    first = (p.get("first_name") or "").strip() if isinstance(p.get("first_name"), str) else ""
+    name = p.get("full_name") or p.get("name") or ""
+    name = name.strip() if isinstance(name, str) else ""
+    if not name:
+        last = p.get("last_name") if isinstance(p.get("last_name"), str) else ""
+        name = " ".join(x for x in (first, (last or "").strip()) if x)
+    if not first and name:
+        first = name.split()[0]
+    co = p.get("company") if isinstance(p.get("company"), dict) else {}
+    company = co.get("name") or p.get("company_name") or ""
+    company = company.strip() if isinstance(company, str) else ""
+    return (frozenset(_cf_option_ids(cf.get(INVESTOR_LEVEL_FIELD))), first, name, company,
+            tuple(sorted(_person_emails(p))))
+
+
+def _people_slim_status_index():
+    """{person id str: (kyc_ok, accreditation_ok)} from people-slim.json, or
+    None on any S3/parse failure. The same pass also fills
+    _people_slim_cache["dg_by_id"] (Investor Level, names, company, emails) for
+    the deal gate. Never reads people.json."""
+    now = time.time()
+    cache = _people_slim_cache
+    if cache["by_id"] is not None and now - cache["checked_at"] < PEOPLE_SLIM_TTL_SECONDS:
+        return cache["by_id"]
+    try:
+        s3 = boto3.client('s3')
+        head = s3.head_object(Bucket=PEOPLE_SLIM_BUCKET, Key=PEOPLE_SLIM_KEY)
+        etag = head.get("ETag")
+        if cache["by_id"] is not None and etag and etag == cache["etag"]:
+            cache["checked_at"] = now
+            return cache["by_id"]
+        obj = s3.get_object(Bucket=PEOPLE_SLIM_BUCKET, Key=PEOPLE_SLIM_KEY)
+        data = json.loads(obj["Body"].read())
+        by_id = {}
+        by_email = {}
+        dg_by_id = {}
+        for p in (data.get("people") or []) if isinstance(data, dict) else []:
+            if not isinstance(p, dict) or p.get("id") is None:
+                continue
+            cf = p.get("custom_fields") or {}
+            by_id[str(p["id"])] = (bool(_cf_option_ids(cf.get(KYC_FIELD)) & KYC_OK_IDS),
+                                   bool(_cf_option_ids(cf.get(ACCREDITATION_FIELD)) & ACCREDITATION_OK_IDS))
+            dg_by_id[str(p["id"])] = _dg_person_slim(p, cf)
+            for em in _person_emails(p):
+                by_email.setdefault(em, set()).add(str(p["id"]))
+        cache.update({"etag": etag or obj.get("ETag"), "checked_at": now, "by_id": by_id,
+                      "by_email": by_email, "dg_by_id": dg_by_id,
+                      "last_modified": head.get("LastModified") or obj.get("LastModified")})
+        return by_id
+    except Exception as e:
+        logger.warning(f"people-slim.json read failed (status item hidden): {type(e).__name__}: {e}")
+        return None
+
+
+# --- Deal gate (shared verbatim with chadgracia/trades and chadgracia/CRMDealDetails) ---
+# Offer terms are shown only to recognised investors. The switch lives in
+# s3://full-pipeline-cache/deal-gate.json; with it off nothing changes for
+# non-admins. gg_view (personal view-only links) only ever unlocks terms: it is
+# never treated as signed in, never minted into gg_id and never yields an SSO token.
+DG_BUCKET = "full-pipeline-cache"
+DG_SWITCH_KEY = "deal-gate.json"
+DG_SWITCH_TTL = 60
+DG_REQUESTS_PREFIX = "deal-gate/requests/"
+DG_SITE = "https://trades.graciagroup.com"
+DG_VIEW_COOKIE = "gg_view"
+DG_LINK_TTL = 183 * 86400
+DG_COOKIE_TTL = 365 * 86400
+DG_COOKIE_MAX_AGE = 31536000
+DG_STATES = ("anon", "pending", "blocked", "cleared")
+DG_IL_LABELS = {"6950561": "Unknown", "7161646": "Hold: Screen for Substantive",
+                "6950562": "Non-Accredited", "7162165": "Substantive",
+                "6950563": "Accredited Investor", "7209227": "Qualified Client",
+                "6950564": "Qualified Purchaser"}
+DG_IL_NON_ACCREDITED = "6950562"
+DG_IL_HOLD = "7161646"
+DG_PH_PRICE = "$00.00"
+DG_PH_SIZE = "$000K"
+DG_PH_PCT = "0.0%"
+DG_PH_TEXT = "Xxxxxx"
+DG_PH_NUM = "0,000"
+DG_COGNITO_HOST = "https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com"
+DG_COGNITO_CLIENT = "71vrglkidm13jb73u7nje3d1t2"
+# Query parameters that never travel into a link, a redirect target or a log line.
+DG_STRIP_PARAMS = ("v", "gp", "sso", "admin_key", "key", "code", "gate_preview", "state", "token")
+_DG_TOKEN_RE = re.compile(r"^([A-Za-z0-9_-]{1,64})\.(\d{1,12})\.([0-9a-f]{32})$")
+_dg_switch_cache = {"enabled": None, "checked_at": 0.0}
+
+
+def _dg_secret():
+    """VIEW_LINK_SECRET from the Lambda environment ('' = personal links off)."""
+    return os.environ.get("VIEW_LINK_SECRET", "") or ""
+
+
+def dg_switch_enabled(s3=None, now=None):
+    """Deal-gate switch. Cached DG_SWITCH_TTL seconds. A missing or unreadable
+    object keeps the last value this container saw, else OFF. Never raises."""
+    now = time.time() if now is None else now
+    c = _dg_switch_cache
+    if c["checked_at"] and now - c["checked_at"] < DG_SWITCH_TTL:
+        return bool(c["enabled"])
+    c["checked_at"] = now
+    try:
+        s3 = s3 or boto3.client('s3')
+        obj = s3.get_object(Bucket=DG_BUCKET, Key=DG_SWITCH_KEY)
+        data = json.loads(obj["Body"].read())
+        val = data.get("enabled") if isinstance(data, dict) else None
+        if not isinstance(val, bool):
+            raise ValueError("no boolean 'enabled'")
+        c["enabled"] = val
+    except Exception as e:
+        logger.info(f"deal-gate: switch unreadable ({type(e).__name__}); "
+                    f"keeping {'ON' if c['enabled'] else 'OFF'}")
+    return bool(c["enabled"])
+
+
+def _dg_sig(prefix, pid, exp, secret):
+    return hmac.new(secret.encode(), f"{prefix}|{pid}|{exp}".encode(),
+                    hashlib.sha256).hexdigest()[:32]
+
+
+def dg_make_token(pid, prefix="view1", ttl=DG_LINK_TTL, now=None):
+    """'<pid>.<exp>.<sig>' or None when VIEW_LINK_SECRET is not set."""
+    secret = _dg_secret()
+    if not secret or not _DG_TOKEN_RE.match(f"{pid}.1.{'0' * 32}"):
+        return None
+    exp = int(time.time() if now is None else now) + int(ttl)
+    return f"{pid}.{exp}.{_dg_sig(prefix, pid, exp, secret)}"
+
+
+def dg_verify_token(token, prefix="view1", now=None):
+    """pid for a well-formed, unexpired, correctly signed token, else None."""
+    secret = _dg_secret()
+    if not secret or not isinstance(token, str):
+        return None
+    m = _DG_TOKEN_RE.match(token)
+    if not m:
+        return None
+    pid, exp, sig = m.group(1), m.group(2), m.group(3)
+    if int(exp) <= int(time.time() if now is None else now):
+        return None
+    if not hmac.compare_digest(_dg_sig(prefix, pid, exp, secret), sig):
+        return None
+    return pid
+
+
+def dg_view_cookie(pid, now=None):
+    """Set-Cookie value for gg_view, or None when links are disabled."""
+    tok = dg_make_token(pid, "viewc1", DG_COOKIE_TTL, now)
+    if not tok:
+        return None
+    return (f"{DG_VIEW_COOKIE}={tok}; Max-Age={DG_COOKIE_MAX_AGE}; Path=/; "
+            "Secure; HttpOnly; SameSite=Lax")
+
+
+def dg_view_pid(event, now=None):
+    """Person id from a valid gg_view cookie, else None. View-only."""
+    return dg_verify_token(_get_cookie(event, DG_VIEW_COOKIE), "viewc1", now)
+
+
+def _dg_query_pairs(event):
+    raw = event.get("rawQueryString")
+    if isinstance(raw, str):
+        return urllib.parse.parse_qsl(raw, keep_blank_values=True)
+    return list((event.get("queryStringParameters") or {}).items())
+
+
+def dg_clean_path(path, fallback="/"):
+    """A same-site relative path (with query) with link/secret parameters
+    removed, else `fallback`."""
+    if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):
+        return fallback
+    if "\\" in path or any(ord(ch) < 32 for ch in path) or len(path) > 2000:
+        return fallback
+    parts = urllib.parse.urlsplit(path)
+    if parts.scheme or parts.netloc:
+        return fallback
+    pairs = [(k, v) for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+             if k not in DG_STRIP_PARAMS]
+    qs = urllib.parse.urlencode(pairs)
+    return parts.path + (("?" + qs) if qs else "")
+
+
+def dg_current_path(event, fallback="/"):
+    """This request's path and query, without link/secret parameters."""
+    path = (event.get("rawPath") or event.get("path")
+            or (event.get("requestContext") or {}).get("http", {}).get("path") or "")
+    if not path.startswith("/"):
+        path = fallback.split("?", 1)[0]
+    pairs = [(k, v) for k, v in _dg_query_pairs(event) if k not in DG_STRIP_PARAMS]
+    qs = urllib.parse.urlencode(pairs)
+    return path + (("?" + qs) if qs else "")
+
+
+def dg_link_redirect(event, fallback="/", now=None):
+    """For a valid, unexpired ?v= token: a 302 to the same URL without v (every
+    other parameter kept) that sets gg_view. Else None (render normally)."""
+    qp = event.get("queryStringParameters") or {}
+    v = qp.get("v")
+    if not v:
+        return None
+    pid = dg_verify_token(v, "view1", now)
+    if not pid:
+        logger.info("deal-gate: ignored invalid or expired personal link")
+        return None
+    cookie = dg_view_cookie(pid, now)
+    if not cookie:
+        return None
+    path = (event.get("rawPath") or event.get("path")
+            or (event.get("requestContext") or {}).get("http", {}).get("path") or "")
+    if not path.startswith("/"):
+        path = fallback.split("?", 1)[0]
+    pairs = [(k, val) for k, val in _dg_query_pairs(event) if k != "v"]
+    qs = urllib.parse.urlencode(pairs)
+    resp = {"statusCode": 302,
+            "headers": {"Location": path + (("?" + qs) if qs else ""),
+                        "Cache-Control": "private, no-store"},
+            "body": ""}
+    logger.info("deal-gate: personal link accepted; gg_view set")
+    return dg_add_cookies(resp, event, [cookie])
+
+
+def dg_add_cookies(response, event, cookies):
+    """Add Set-Cookie values to a response without dropping any already there.
+    Payload v2 (Function URL / HTTP API) uses the `cookies` list; payload v1
+    (REST API) needs multiValueHeaders, because a plain header holds only one."""
+    cookies = [c for c in (cookies or []) if c]
+    if not cookies:
+        return response
+    out = dict(response)
+    if event.get("version") == "2.0" or "rawPath" in event or "cookies" in event:
+        out["cookies"] = list(out.get("cookies") or []) + cookies
+        return out
+    headers = dict(out.get("headers") or {})
+    mv = {k: list(v) for k, v in (out.get("multiValueHeaders") or {}).items()}
+    existing = mv.pop("Set-Cookie", [])
+    if "Set-Cookie" in headers:
+        existing = [headers.pop("Set-Cookie")] + existing
+    mv["Set-Cookie"] = existing + cookies
+    out["headers"] = headers
+    out["multiValueHeaders"] = mv
+    return out
+
+
+def dg_people():
+    """(by_email, dg_by_id, last_modified) from people-slim.json, or None."""
+    if _people_slim_status_index() is None:
+        return None
+    c = _people_slim_cache
+    if c.get("dg_by_id") is None or c.get("by_email") is None:
+        return None
+    return c["by_email"], c["dg_by_id"], c.get("last_modified")
+
+
+def dg_level_state(level_ids):
+    ids = {str(i) for i in (level_ids or ())}
+    if DG_IL_NON_ACCREDITED in ids:
+        return "blocked"
+    if DG_IL_HOLD in ids:
+        return "pending"
+    return "cleared"
+
+
+def dg_level_label(level_ids):
+    ids = sorted(str(i) for i in (level_ids or ()))
+    if not ids:
+        return "Blank"
+    return " / ".join(DG_IL_LABELS.get(i, f"Other ({i})") for i in ids)
+
+
+def dg_combine(states):
+    """Several matched people: cleared if any, else blocked if any, else pending."""
+    states = list(states)
+    if "cleared" in states:
+        return "cleared"
+    if "blocked" in states:
+        return "blocked"
+    return "pending"
+
+
+def dg_state_for_email(email, people):
+    by_email, dg_by_id, _ = people
+    pids = by_email.get((email or "").strip().lower()) or ()
+    if not pids:
+        return "pending", None
+    states = {pid: dg_level_state((dg_by_id.get(pid) or ((),))[0]) for pid in pids}
+    st = dg_combine(states.values())
+    pick = sorted(p for p, s in states.items() if s == st)
+    return st, (pick[0] if pick else None)
+
+
+def dg_viewer_state(event, view_pid=None):
+    """'anon' | 'pending' | 'blocked' | 'cleared' for a non-admin request.
+    people-slim.json is read only when the request carries an identity."""
+    email = _read_identity_email(event)
+    view_pid = view_pid or dg_view_pid(event)
+    if not email and not view_pid:
+        return "anon"
+    people = dg_people()
+    if people is None:
+        logger.warning("deal-gate: people index unreadable; identified viewer treated as cleared")
+        return "cleared"
+    states = []
+    if email:
+        states.append(dg_state_for_email(email, people)[0])
+    if view_pid:
+        rec = people[1].get(str(view_pid))
+        states.append(dg_level_state(rec[0]) if rec else "pending")
+    return dg_combine(states)
+
+
+def dg_decide(event, qp, is_admin, view_pid=None):
+    """(gated, state, preview). Admin preview (&gate_preview=...) works whatever
+    the switch; otherwise the gate applies only when the switch is ON and the
+    viewer is not cleared. With the switch OFF a non-admin request does no
+    people lookup at all."""
+    prev = (qp or {}).get("gate_preview")
+    if is_admin and prev in DG_STATES:
+        return prev != "cleared", prev, True
+    if is_admin:
+        return False, "cleared", False
+    if not dg_switch_enabled():
+        return False, None, False
+    state = dg_viewer_state(event, view_pid)
+    return state != "cleared", state, False
+
+
+def dg_ph(text):
+    """A fixed placeholder, blurred by CSS. Never the real value."""
+    return f'<span class="gated">{text}</span>'
+
+
+def dg_signup_url(dest_url):
+    """Cognito sign-up URL that round-trips to dest_url via `state` (same as the Bid modal)."""
+    state = base64.urlsafe_b64encode(dest_url.encode()).decode().rstrip("=")
+    return (f"{DG_COGNITO_HOST}/signup?client_id={DG_COGNITO_CLIENT}&response_type=code"
+            "&scope=openid+email&redirect_uri=https://trades.graciagroup.com"
+            f"&state={urllib.parse.quote(state, safe='')}")
+
+
+DG_CSS = """<style>
+.gated{filter:blur(5px);-webkit-filter:blur(5px);user-select:none;color:var(--text-secondary,#666)}
+.gate-box{margin:16px 0;padding:18px 22px;border:1px solid var(--border-strong,#d8d4ca);
+  border-left:4px solid var(--accent,#3a5a75);border-radius:6px;background:#faf8f3;font-size:14px}
+.gate-box h2{margin:0 0 8px;font-size:18px}
+.gate-box p{margin:6px 0}
+.gate-form{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.gate-form input[type=email]{flex:1 1 220px;padding:8px 10px;font-size:14px;border:1px solid #ccc;border-radius:5px}
+.gate-form button{padding:8px 16px;font-size:14px;font-weight:600;border:none;border-radius:5px;
+  background:var(--accent,#3a5a75);color:#fff;cursor:pointer}
+.gate-hp{position:absolute!important;left:-9999px!important;width:1px;height:1px;overflow:hidden}
+</style>"""
+
+DG_JS = """<script>
+function ggGateSubmit(f){
+  try{
+    var b=new URLSearchParams();
+    b.append('email',f.elements['email'].value||'');
+    b.append('website',f.elements['website'].value||'');
+    b.append('path',window.location.pathname+window.location.search);
+    fetch('/?view=view-link-request',{method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b.toString()}).catch(function(){});
+  }catch(e){}
+  f.style.display='none';
+  var d=f.parentNode.querySelector('.gate-done'); if(d){d.hidden=false;}
+  return false;
+}
+</script>"""
+
+
+def dg_gate_box(state, dest_url):
+    """The gate box. Copy is fixed; never mentions tracking, the CRM or levels."""
+    if state in ("pending", "blocked"):
+        return (DG_CSS + '<div class="gate-box"><p>Thanks for registering. Your access is being '
+                "reviewed and we'll be in touch.</p></div>")
+    signup = html_mod.escape(dg_signup_url(dest_url), quote=True)
+    return (DG_CSS + DG_JS
+            + '<div class="gate-box">'
+            '<h2>Offer terms are shown to investors we work with</h2>'
+            "<p>Already working with us? Enter your email and we'll send you a one-click link.</p>"
+            '<form class="gate-form" method="post" onsubmit="return ggGateSubmit(this)">'
+            '<input type="email" name="email" required placeholder="Email" aria-label="Email">'
+            '<input type="text" name="website" class="gate-hp" tabindex="-1" autocomplete="off" aria-hidden="true">'
+            '<button type="submit">Send link</button>'
+            '</form>'
+            '<p class="gate-done" hidden>If that address is on file, a link is on its way.</p>'
+            f'<p>New here? <a href="{signup}">Request access</a></p>'
+            '</div>')
+
+
+DG_ADMIN_BOX = """<div class="gg-copylink" style="margin:12px 0;padding:10px 14px;border:1px dashed #b0a98f;border-radius:6px;background:#fffdf5;font-size:13px;max-width:560px">
+<strong>Copy link for&hellip;</strong>
+<input type="text" id="ggCopyQ" placeholder="Name, company or email" style="width:100%;box-sizing:border-box;margin-top:6px;padding:6px 8px;font-size:13px">
+<div id="ggCopyRes" style="margin-top:6px"></div>
+</div>
+<script>
+(function(){
+  var q=document.getElementById('ggCopyQ'), res=document.getElementById('ggCopyRes'), t=null;
+  if(!q||!res) return;
+  var STRIP=['v','gp','sso','admin_key','key','code','gate_preview','state','token'];
+  function dest(){
+    var u=new URL(window.location.href);
+    STRIP.forEach(function(k){u.searchParams.delete(k);});
+    return u.pathname+u.search;
+  }
+  function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function copy(text){
+    if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text);}
+    return new Promise(function(ok,no){var ta=document.createElement('textarea');ta.value=text;
+      ta.style.position='fixed';ta.style.top='-1000px';document.body.appendChild(ta);ta.select();
+      var r=false;try{r=document.execCommand('copy');}catch(e){}document.body.removeChild(ta);r?ok():no();});
+  }
+  function pick(pid,row){
+    fetch('/?view=view-link&pid='+encodeURIComponent(pid)+'&dest='+encodeURIComponent(dest()),{credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        if(!j||!j.link){row.querySelector('.ggc-msg').textContent=(j&&j.error)||'No link';return;}
+        copy(j.link).then(function(){row.querySelector('.ggc-msg').textContent='Copied';},
+                          function(){row.querySelector('.ggc-msg').textContent='Copy failed';});
+      }).catch(function(){row.querySelector('.ggc-msg').textContent='Failed';});
+  }
+  function search(){
+    var s=q.value.trim(); if(s.length<2){res.innerHTML='';return;}
+    fetch('/?view=view-link&q='+encodeURIComponent(s),{credentials:'same-origin'})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        if(!j||!j.matches){res.textContent=(j&&j.error)||'Not available';return;}
+        if(!j.matches.length){res.textContent='No matches';return;}
+        res.innerHTML=j.matches.map(function(m){
+          var warn=m.state==='cleared'?'':' <span style="color:#b45309">('+esc(m.state)+': this link will not unlock terms)</span>';
+          return '<div class="ggc-row" data-pid="'+esc(m.pid)+'" style="padding:4px 0;cursor:pointer;border-bottom:1px solid #eee">'+
+            esc(m.name)+' &middot; '+esc(m.company)+' &middot; '+esc(m.email)+' &middot; '+esc(m.state)+warn+
+            ' <span class="ggc-msg" style="color:#16a34a"></span></div>';
+        }).join('');
+        Array.prototype.forEach.call(res.querySelectorAll('.ggc-row'),function(row){
+          row.addEventListener('click',function(){pick(row.getAttribute('data-pid'),row);});
+        });
+      }).catch(function(){res.textContent='Search failed';});
+  }
+  q.addEventListener('input',function(){clearTimeout(t);t=setTimeout(search,250);});
+})();
+</script>"""
+
+
+def dg_redacted_event(event):
+    """The event for logging: link/secret query values, cookies and the body removed."""
+    try:
+        ev = dict(event or {})
+        qp = ev.get("queryStringParameters")
+        if isinstance(qp, dict):
+            ev["queryStringParameters"] = {k: ("[redacted]" if k in DG_STRIP_PARAMS else v)
+                                           for k, v in qp.items()}
+        if isinstance(ev.get("rawQueryString"), str):
+            pairs = urllib.parse.parse_qsl(ev["rawQueryString"], keep_blank_values=True)
+            ev["rawQueryString"] = urllib.parse.urlencode(
+                [(k, "[redacted]" if k in DG_STRIP_PARAMS else v) for k, v in pairs])
+        if isinstance(ev.get("cookies"), list):
+            ev["cookies"] = [str(c).split("=", 1)[0] + "=[redacted]" for c in ev["cookies"]]
+        for hk in ("headers", "multiValueHeaders"):
+            if isinstance(ev.get(hk), dict):
+                ev[hk] = {k: ("[redacted]" if str(k).lower() in ("cookie", "authorization") else v)
+                          for k, v in ev[hk].items()}
+        if "body" in ev:
+            ev["body"] = "[omitted]"
+        for k in ("multiValueQueryStringParameters",):
+            if isinstance(ev.get(k), dict):
+                ev[k] = {kk: (["[redacted]"] if kk in DG_STRIP_PARAMS else vv) for kk, vv in ev[k].items()}
+        return ev
+    except Exception:
+        return {"note": "event not loggable"}
+# --- end deal gate shared block ---
+
+
+# --- Deal gate: trades-only routes (admin switch page, link API, email-me-a-link) ---
+DG_EMAIL_FROM = "Chad Gracia <cgracia@graciagroup.com>"
+DG_EMAIL_REPLY_TO = "cgracia@rainmakersecurities.com"
+DG_EMAIL_BCC = "cgracia@rainmakersecurities.com"
+DG_EMAIL_SUBJECT = "Your link to Gracia Group offers"
+DG_EMAILS_PER_DAY = 3
+DG_REQUESTS_PER_IP_HOUR = 10
+_DG_EMAIL_RE = re.compile(r"^[^@\s<>\"',;]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}$")
+_DG_NO_STORE = {'Content-Type': 'application/json', 'Cache-Control': 'private, no-store'}
+
+
+def _dg_is_admin(event):
+    qp = event.get('queryStringParameters') or {}
+    return _is_admin_key(qp.get('admin_key')) or _is_admin_key(_get_cookie(event, 'admin_key'))
+
+
+def _dg_json(status, payload):
+    return {'statusCode': status, 'headers': dict(_DG_NO_STORE), 'body': json.dumps(payload)}
+
+
+def _dg_body_params(event):
+    """Form-encoded or JSON POST body as a flat dict of strings."""
+    body = event.get('body') or ''
+    if event.get('isBase64Encoded'):
+        try:
+            body = base64.b64decode(body).decode('utf-8', 'replace')
+        except Exception:
+            body = ''
+    body = body[:20000]
+    hdrs = {str(k).lower(): v for k, v in (event.get('headers') or {}).items()}
+    if 'json' in str(hdrs.get('content-type') or '').lower() or body.lstrip().startswith('{'):
+        try:
+            data = json.loads(body)
+            return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+    return {k: v[0] for k, v in urllib.parse.parse_qs(body, keep_blank_values=True).items()}
+
+
+def _dg_client_ip(event):
+    hdrs = {str(k).lower(): v for k, v in (event.get('headers') or {}).items()}
+    xff = str(hdrs.get('x-forwarded-for') or '').split(',')[0].strip()
+    rc = event.get('requestContext') or {}
+    return xff or (rc.get('http') or {}).get('sourceIp') or (rc.get('identity') or {}).get('sourceIp') or 'unknown'
+
+
+def _dg_missing(e):
+    code = (getattr(e, 'response', None) or {}).get('Error', {}).get('Code')
+    return type(e).__name__ in ('NoSuchKey', 'NotFound') or code in ('NoSuchKey', '404', 'NotFound')
+
+
+def _dg_rate_hit(s3, key, limit):
+    """Count one use against a small S3 counter. True = allowed. Any S3 error
+    other than a missing object fails closed (not allowed)."""
+    count = 0
+    try:
+        obj = s3.get_object(Bucket=DG_BUCKET, Key=key)
+        count = int((json.loads(obj['Body'].read()) or {}).get('count') or 0)
+    except Exception as e:
+        if not _dg_missing(e):
+            logger.warning(f"deal-gate: rate counter unreadable ({type(e).__name__})")
+            return False
+    if count >= limit:
+        return False
+    try:
+        s3.put_object(Bucket=DG_BUCKET, Key=key, Body=json.dumps({'count': count + 1}).encode(),
+                      ContentType='application/json')
+    except Exception as e:
+        logger.warning(f"deal-gate: rate counter write failed ({type(e).__name__})")
+        return False
+    return True
+
+
+def _dg_hash(value):
+    return hashlib.sha256(str(value).encode()).hexdigest()[:32]
+
+
+def dg_email_text(first_name, link):
+    hello = f"Hello {first_name}," if first_name else "Hello,"
+    return (f"{hello}\n\nHere is your link:\n{link}\n\nIt opens the page you were viewing.\n\n"
+            "Best wishes,\nChad Gracia\n")
+
+
+def _dg_view_link_request(event, s3=None, ses=None, now=None):
+    """POST /?view=view-link-request. Same response whatever happens; an email
+    goes out only to an address that matches a cleared person. Never writes to
+    Pipeline; never logs the address or the link."""
+    ok = _dg_json(200, {'ok': True})
+    try:
+        now = time.time() if now is None else now
+        p = _dg_body_params(event)
+        s3 = s3 or boto3.client('s3')
+        stamp = datetime.fromtimestamp(now, timezone.utc)
+        ip_key = f"{DG_REQUESTS_PREFIX}ip/{stamp.strftime('%Y%m%d%H')}/{_dg_hash(_dg_client_ip(event))}.json"
+        if not _dg_rate_hit(s3, ip_key, DG_REQUESTS_PER_IP_HOUR):
+            logger.info("deal-gate: link request refused (ip limit)")
+            return ok
+        if (p.get('website') or '').strip():
+            logger.info("deal-gate: link request ignored (honeypot)")
+            return ok
+        email = (p.get('email') or '').strip().lower()
+        if len(email) > 254 or not _DG_EMAIL_RE.match(email):
+            return ok
+        path = dg_clean_path((p.get('path') or '/').strip(), '/')
+        if not _dg_secret():
+            return ok
+        people = dg_people()
+        if people is None:
+            logger.warning("deal-gate: link request skipped (people index unreadable)")
+            return ok
+        state, pid = dg_state_for_email(email, people)
+        if state != 'cleared' or not pid:
+            logger.info("deal-gate: link request: no cleared match")
+            return ok
+        em_key = f"{DG_REQUESTS_PREFIX}email/{stamp.strftime('%Y%m%d')}/{_dg_hash(email)}.json"
+        if not _dg_rate_hit(s3, em_key, DG_EMAILS_PER_DAY):
+            logger.info("deal-gate: link request refused (address limit)")
+            return ok
+        token = dg_make_token(pid, now=now)
+        if not token:
+            return ok
+        link = DG_SITE + path + ('&' if '?' in path else '?') + 'v=' + token
+        first = (people[1].get(pid) or ((), ''))[1]
+        (ses or boto3.client('ses', region_name='us-east-1')).send_email(
+            Source=DG_EMAIL_FROM,
+            Destination={'ToAddresses': [email], 'BccAddresses': [DG_EMAIL_BCC]},
+            ReplyToAddresses=[DG_EMAIL_REPLY_TO],
+            Message={'Subject': {'Data': DG_EMAIL_SUBJECT, 'Charset': 'UTF-8'},
+                     'Body': {'Text': {'Data': dg_email_text(first, link), 'Charset': 'UTF-8'}}})
+        logger.info("deal-gate: personal link emailed")
+    except Exception as e:
+        logger.warning(f"deal-gate: link request failed ({type(e).__name__})")
+    return ok
+
+
+def _dg_view_link_api(event):
+    """Admin-only JSON: ?view=view-link&q=... (up to 10 people) or
+    &pid=...&dest=... (the personal link for that page)."""
+    if not _dg_is_admin(event):
+        return _dg_json(403, {'error': 'Forbidden'})
+    qp = event.get('queryStringParameters') or {}
+    people = dg_people()
+    if people is None:
+        return _dg_json(503, {'error': 'People index unavailable'})
+    by_email, dg_by_id, _ = people
+    pid = (qp.get('pid') or '').strip()
+    if pid:
+        rec = dg_by_id.get(pid)
+        if rec is None:
+            return _dg_json(404, {'error': 'Unknown person'})
+        dest = dg_clean_path((qp.get('dest') or '/').strip(), '/')
+        token = dg_make_token(pid)
+        if not token:
+            return _dg_json(200, {'error': 'Personal links are disabled (VIEW_LINK_SECRET not set)'})
+        return _dg_json(200, {'link': DG_SITE + dest + ('&' if '?' in dest else '?') + 'v=' + token,
+                              'state': dg_level_state(rec[0])})
+    q = (qp.get('q') or '').strip().lower()
+    if len(q) < 2:
+        return _dg_json(200, {'matches': []})
+    matches = []
+    for p_id, rec in dg_by_id.items():
+        levels, first, name, company, emails = rec
+        if q in name.lower() or q in company.lower() or any(q in e for e in emails):
+            matches.append({'pid': p_id, 'name': name, 'company': company,
+                            'email': emails[0] if emails else '', 'state': dg_level_state(levels)})
+            if len(matches) >= 10:
+                break
+    return _dg_json(200, {'matches': matches})
+
+
+def _dg_admin_page(event, post=False, s3=None):
+    """Admin-only ?view=deal-gate: switch state, link secret yes/no, people-slim
+    stats, On/Off (POST only)."""
+    if not _dg_is_admin(event):
+        return {'statusCode': 403, 'headers': {'Content-Type': 'text/plain; charset=utf-8'},
+                'body': 'Forbidden'}
+    msg = ''
+    if post:
+        action = (_dg_body_params(event).get('action') or '').strip().lower()
+        if action in ('on', 'off'):
+            enabled = action == 'on'
+            try:
+                (s3 or boto3.client('s3')).put_object(
+                    Bucket=DG_BUCKET, Key=DG_SWITCH_KEY, ContentType='application/json',
+                    Body=json.dumps({'enabled': enabled,
+                                     'updated_at': datetime.now(timezone.utc).isoformat()}).encode())
+                _dg_switch_cache.update({'enabled': enabled, 'checked_at': time.time()})
+                msg = f"Switch turned {'ON' if enabled else 'OFF'}."
+                logger.info(f"deal-gate: switch set {'ON' if enabled else 'OFF'} by admin")
+            except Exception as e:
+                code = (getattr(e, 'response', None) or {}).get('Error', {}).get('Code') or type(e).__name__
+                msg = f"S3 write denied or failed ({code}). The switch was NOT changed."
+                logger.warning(f"deal-gate: switch write failed ({code})")
+    else:
+        _dg_switch_cache['checked_at'] = 0.0   # fresh read for the admin view
+    enabled = dg_switch_enabled(s3)
+    people = dg_people()
+    rows = []
+    if people is None:
+        rows.append(('people-slim.json', 'unreadable'))
+    else:
+        by_email, dg_by_id, last_mod = people
+        st_counts = {'cleared': 0, 'pending': 0, 'blocked': 0}
+        lvl_counts = {}
+        for rec in dg_by_id.values():
+            st_counts[dg_level_state(rec[0])] += 1
+            lab = dg_level_label(rec[0])
+            lvl_counts[lab] = lvl_counts.get(lab, 0) + 1
+        rows += [('people-slim.json LastModified', str(last_mod or 'unknown')),
+                 ('People', f"{len(dg_by_id):,}"), ('Emails', f"{len(by_email):,}")]
+        rows += [(f"Viewer state: {k}", f"{v:,}") for k, v in st_counts.items()]
+        rows += [(f"Investor Level: {k}", f"{v:,}") for k, v in sorted(lvl_counts.items())]
+    esc = html_mod.escape
+    table = ''.join(f'<tr><th style="text-align:left;padding:4px 12px 4px 0">{esc(k)}</th>'
+                    f'<td style="padding:4px 0">{esc(v)}</td></tr>' for k, v in rows)
+    btn = ('<form method="post" action="" style="display:inline-block;margin-right:8px">'
+           '<input type="hidden" name="action" value="{a}"><button type="submit" '
+           'style="padding:8px 18px;font-size:14px">{label}</button></form>')
+    body = (
+        '<!doctype html><html><head><meta charset="utf-8"><meta name="robots" content="noindex">'
+        '<title>Deal gate · Admin</title></head>'
+        '<body style="font-family:Arial,sans-serif;max-width:760px;margin:30px auto;padding:0 16px">'
+        '<h1 style="font-size:22px">Deal gate</h1>'
+        + (f'<p style="padding:8px 12px;border:1px solid #b45309;background:#fff7e6">{esc(msg)}</p>' if msg else '')
+        + f'<p style="font-size:18px">Switch: <strong>{"ON" if enabled else "OFF"}</strong></p>'
+        + f'<p>VIEW_LINK_SECRET set: <strong>{"yes" if _dg_secret() else "no"}</strong></p>'
+        + btn.format(a='on', label='Turn ON') + btn.format(a='off', label='Turn OFF')
+        + f'<table style="margin-top:20px;border-collapse:collapse">{table}</table>'
+        '<p style="margin-top:20px;color:#666;font-size:13px">Preview any page as a viewer with '
+        '&amp;gate_preview=anon|pending|blocked|cleared (admins only).</p>'
+        '</body></html>')
+    return {'statusCode': 200,
+            'headers': {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-store'},
+            'body': body}
+# --- end deal gate trades-only routes ---
 
 
 AUCTIONS_BUCKET = "full-pipeline-cache"
@@ -2376,7 +3129,7 @@ def format_valuation(valuation):
     return f" (${valuation:.1f}Bn)"
 
 def lambda_handler(event, context):
-    logger.info('Event received: %s', json.dumps(event))
+    logger.info('Event received: %s', json.dumps(dg_redacted_event(event), default=str))
     logger.info("Lambda function started")
 
     # Only the partner-desk reply form POSTs to this function.
@@ -2389,8 +3142,24 @@ def lambda_handler(event, context):
             'headers': {'Content-Type': 'text/html; charset=utf-8'},
             'body': PARTNER_DESK_HTML.replace('__PD_TOP__', PARTNER_DESK_THANKS).replace('__PD_FORM__', '  <p class="small">Answer received — see confirmation at the top of this page.</p>'),
         }
+    _dg_view = (event.get('queryStringParameters') or {}).get('view')
+    if http_method == 'POST' and _dg_view == 'view-link-request':
+        return _dg_view_link_request(event)
+    if http_method == 'POST' and _dg_view == 'deal-gate':
+        return _dg_admin_page(event, post=True)
     if http_method == 'POST':
         return _json_response(405, {'error': 'Method not allowed'})
+    if _dg_view == 'view-link-request':   # GET does nothing
+        return _json_response(405, {'error': 'Method not allowed'})
+
+    # Personal view-only link (?v=) on any page: set gg_view, 302 without v.
+    _dg_redirect = dg_link_redirect(event, '/')
+    if _dg_redirect:
+        return _dg_redirect
+    if _dg_view == 'deal-gate':
+        return _dg_admin_page(event)
+    if _dg_view == 'view-link':
+        return _dg_view_link_api(event)
 
     # If we're returning from Cognito with ?code=<auth_code> in the query
     # string, set the auth cookie and 302 back to the clean URL so reloads
@@ -2490,7 +3259,18 @@ def lambda_handler(event, context):
                 'max_size': format_currency(d.get('max_deal_size')),
             } for d in _pub_deals), key=lambda r: (r['company'] or '').lower())
             _PUBLIC_DEAL_INDEX_CACHE['ts'] = time.time()
-        return _json_response(200, _PUBLIC_DEAL_INDEX_CACHE['rows'])
+        _pub_admin = (_is_admin_key(query_params.get('admin_key'))
+                      or _is_admin_key(_get_cookie(event, 'admin_key')))
+        _pub_gated, _, _pub_preview = dg_decide(event, query_params, _pub_admin)
+        if _pub_gated:
+            _pub_resp = _json_response(200, [{'id': r.get('id'), 'company': r.get('company'),
+                                              'side': r.get('side')}
+                                             for r in _PUBLIC_DEAL_INDEX_CACHE['rows']])
+        else:
+            _pub_resp = _json_response(200, _PUBLIC_DEAL_INDEX_CACHE['rows'])
+        if _pub_preview or dg_switch_enabled():
+            _pub_resp['headers']['Cache-Control'] = 'private, no-store'
+        return _pub_resp
 
     # Admin-only Transferability check (read-only JSON).
     if query_params.get('view') == 'transferability':
@@ -2688,6 +3468,13 @@ def lambda_handler(event, context):
     # GET path: render the HTML dashboard as before.
     _grid_is_admin = (_is_admin_key(query_params.get('admin_key'))
                       or _is_admin_key(_get_cookie(event, 'admin_key')))
+    # Deal gate: withhold offer terms from viewers who are not cleared (switch
+    # ON), or as an admin preview (&gate_preview=...), which renders as that viewer.
+    dg_gated, dg_state, dg_preview = dg_decide(event, query_params, _grid_is_admin)
+    if dg_preview:
+        _grid_is_admin = False
+    if dg_gated:
+        logger.info(f"deal-gate: terms withheld ({dg_state})")
     try:
         deals = tr_filter_deals(_load_deals_from_s3(), admin=_grid_is_admin)
     except Exception as e:
@@ -2755,6 +3542,8 @@ def lambda_handler(event, context):
     # the server sets (below) once the parameter has been seen.
     _admin_param_ok = _is_admin_key(query_params.get('admin_key'))
     _is_admin = _admin_param_ok or _is_admin_key(_get_cookie(event, 'admin_key'))
+    if dg_preview:
+        _is_admin = False
 
     _updated_map = _load_pipeline_updated_at()
     _vis_map = visibility_map_safe() if _is_admin else {}
@@ -2796,25 +3585,40 @@ def lambda_handler(event, context):
         gross_display = format_currency(gross_price, include_cents=True) if gross_price is not None else ''
         gross_valuation_text = format_valuation(gross_valuation).strip()
 
+        _r_sc = deal['structure_class']
+        _r_mf_attr, _r_carry_attr, _r_layers_attr = deal['management_fee'], deal['carry'], deal.get('layers') or ''
+        _r_struct = f"{deal['structure']}{layer_badge_html}"
+        _r_min = format_currency(deal['min_deal_size'])
+        _r_max = format_currency(deal['max_deal_size'])
+        _r_mf, _r_carry = deal['management_fee'], deal['carry']
+        if dg_gated:
+            # Deal gate: fixed placeholders; the real values never reach the page.
+            _r_sc, _r_mf_attr, _r_carry_attr, _r_layers_attr = '', '', '', ''
+            _r_struct = dg_ph(DG_PH_TEXT)
+            net_display = gross_display = dg_ph(DG_PH_PRICE)
+            net_valuation_text = gross_valuation_text = ''
+            _r_min = _r_max = dg_ph(DG_PH_SIZE)
+            _r_mf = _r_carry = dg_ph(DG_PH_PCT)
+
 
         # Nudge/LOI links carry NUDGE_KEY / LOI_PAGE_KEY, so they are only
         # rendered for admins; non-admin HTML never contains them.
         admin_links = (f'''<br class="nudge-br" style="display:none;"><a class="nudge-bell" data-deal-id="{deal['id']}" style="display:none;margin-top:4px;text-decoration:none;" href="https://ak5zolfpynhrimrsuw5rbjchwu0ktexz.lambda-url.us-east-1.on.aws/?deal_id={deal['id']}&key={NUDGE_KEY}" target="_blank" rel="noopener" title="Nudge client to update or cancel" onclick="if(!confirm('Send an update request to this client?'))return false;localStorage.setItem('nudge_'+this.getAttribute('data-deal-id'),Date.now());this.style.display='none';var br=this.previousElementSibling;if(br&&br.tagName==='BR')br.style.display='none';return true;">🔔</a><a class="loi-send" data-deal-id="{deal['id']}" style="display:none;margin-left:7px;text-decoration:none;" href="{LOI_SEND_URL}?send=1&deal_id={deal['id']}&key={LOI_PAGE_KEY}" target="_blank" rel="noopener" title="Email this client a Letter of Intent link" onclick="if(!confirm('Email an LOI link to this client?'))return false;localStorage.setItem('loi_'+this.getAttribute('data-deal-id'),Date.now());this.style.display='none';return true;">✍️</a>''' if _is_admin else "")
 
         table_rows += f"""
-        <tr class="deal-row {deal['type'].lower()} {deal['structure_class']}" data-deal-id="{deal['id']}" data-management-fee="{deal['management_fee']}" data-carry="{deal['carry']}" data-stage="{deal['stage']}" data-data-room="{deal['data_room']}" data-highlighted="{deal['highlighted']}" data-layers="{deal.get('layers') or ''}" data-company="{deal['company']}" data-unconfirmed="{'Yes' if _unconf else 'No'}">
+        <tr class="deal-row {deal['type'].lower()} {_r_sc}" data-deal-id="{deal['id']}" data-management-fee="{_r_mf_attr}" data-carry="{_r_carry_attr}" data-stage="{deal['stage']}" data-data-room="{deal['data_room']}" data-highlighted="{deal['highlighted']}" data-layers="{_r_layers_attr}" data-company="{deal['company']}" data-unconfirmed="{'Yes' if _unconf else 'No'}">
             <td><a href="https://trades.graciagroup.com/deal/{deal['id']}">{deal['id']}</a><br><button type="button" class="copy-id" data-copy-id="{deal['id']}" title="Copy deal ID" aria-label="Copy deal ID {deal['id']}"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect><path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"></path></svg></button></td>
             <td>{deal['type']}</td>
             <td>{company_cell}</td>
-            <td>{deal['structure']}{layer_badge_html}</td>
+            <td>{_r_struct}</td>
             <td class="price-cell" data-valuation="{net_valuation_text}">{net_display}</td>
             <td class="price-cell" data-valuation="{gross_valuation_text}">{gross_display}</td>
-            <td>{format_currency(deal['min_deal_size'])}</td>
-            <td>{format_currency(deal['max_deal_size'])}</td>
+            <td>{_r_min}</td>
+            <td>{_r_max}</td>
             <td>{format_currency(deal['company_lr_pps'], include_cents=True)}</td>
             <td>{format_currency(deal['company_lr_val'], include_cents=True)}</td>
-            <td>{deal['management_fee']}</td>
-            <td>{deal['carry']}</td>
+            <td>{_r_mf}</td>
+            <td>{_r_carry}</td>
             <td style="text-align:center;">{get_last_updated_date(deal)}{admin_links}</td>
         </tr>
         """
@@ -2827,6 +3631,9 @@ def lambda_handler(event, context):
 
     top_nav_html = _render_top_nav(event, _is_admin, active='indications')
     deal_switcher_html = _render_deal_switcher_modal(_is_admin)
+    _dg_hide = ' style="display:none"' if dg_gated else ''
+    _dg_box_html = dg_gate_box(dg_state, DG_SITE + dg_current_path(event, '/')) if dg_gated else ''
+    _dg_admin_html = DG_ADMIN_BOX if _is_admin else ''
 
     # GA4 auth event. The Cognito return leg redirects to ?auth=1 (see above), so this
     # renders only on the pageview immediately following authentication, never on an
@@ -4040,7 +4847,7 @@ def lambda_handler(event, context):
                     <label class="checkbox-label"><input type="checkbox" id="buyFilter" checked onchange="filterTable()">Show Bids</label>
                     <label class="checkbox-label"><input type="checkbox" id="sellFilter" checked onchange="filterTable()">Show Offers</label>
                 </div>
-                <div class="filter-group">
+                <div class="filter-group"{_dg_hide}>
                     <span class="filter-label">Structure:</span>
                     <label class="checkbox-label"><input type="checkbox" id="directFilter" checked onchange="filterTable()"> Direct</label>
                     <label class="checkbox-label"><input type="checkbox" id="forwardFilter" checked onchange="filterTable()"> Forward</label>
@@ -4049,7 +4856,7 @@ def lambda_handler(event, context):
                         <span class="sub-filter" id="multiLayerWrap">(<label class="checkbox-label"><input type="checkbox" id="multiLayerFilter" checked onchange="filterTable()"> Multi-Layer</label>)</span>
                     </span>
                 </div>
-                <div class="filter-group">
+                <div class="filter-group"{_dg_hide}>
                     <span class="filter-label">Fees:</span>
                     <label class="checkbox-label"><input type="checkbox" id="managementFeeFilter" checked onchange="filterTable()"> Management</label>
                     <label class="checkbox-label"><input type="checkbox" id="carryFilter" checked onchange="filterTable()"> Carry</label>
@@ -4058,7 +4865,7 @@ def lambda_handler(event, context):
         </div>
         <div class="ticket-size-filter">
             <div class="filter-row">
-                <div class="slider-group">
+                <div class="slider-group"{_dg_hide}>
                     <span class="filter-label">Ticket Size:</span>
                     <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="0" data-hi="250000" checked onchange="filterTable()"> &lt;$250K</label>
                     <label class="checkbox-label"><input type="checkbox" class="ticket-filter" data-lo="250000" data-hi="500000" checked onchange="filterTable()"> $250K–$500K</label>
@@ -4098,7 +4905,7 @@ def lambda_handler(event, context):
 
         </div>
 
-        <div class="table-toolbar">
+        {_dg_admin_html}{_dg_box_html}<div class="table-toolbar">
             <button class="toolbar-btn" onclick="location.reload()">Show All</button>
             <button class="toolbar-btn" onclick="downloadPDF()">Download Selected Deals</button>
         </div>
@@ -4158,4 +4965,6 @@ def lambda_handler(event, context):
         _page_response['cookies'] = [
             f"admin_key={ADMIN_KEY}; Max-Age=31536000; Path=/; Secure; HttpOnly; SameSite=Lax"
         ]
+    if dg_preview or dg_switch_enabled():
+        _page_response['headers']['Cache-Control'] = 'private, no-store'
     return _page_response

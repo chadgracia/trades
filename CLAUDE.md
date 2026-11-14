@@ -21,6 +21,25 @@
   Last Confirmed alone. Missing/unreadable/malformed log = no restores. Never raises.
 - Tests: `python3.12 -m unittest discover -s tests` (tests/test_unconfirmed.py).
 
+## Deal gate (shared block, identical in chadgracia/trades and chadgracia/CRMDealDetails)
+- Code between `# --- Deal gate (shared verbatim ...` and `# --- end deal gate shared block ---`
+  is the same in both repos; change both together. Tests: `tests/test_deal_gate.py`.
+- Switch: `s3://full-pipeline-cache/deal-gate.json` `{"enabled": bool, "updated_at": iso}`, cached 60 s;
+  missing/unreadable keeps the container's last value, else OFF. Switch OFF = non-admin output
+  unchanged (golden files in `tests/fixtures/` were rendered by the pre-gate code; keep them passing).
+  Admin page + On/Off: trades `/?view=deal-gate`. Admin preview anywhere: `&gate_preview=anon|pending|blocked|cleared`.
+- Viewer state from people-slim.json (`_people_slim_status_index`, never people.json), loaded only
+  when the request carries gg_id / gg_view / gp. Investor Level `custom_label_3923758`:
+  Non-Accredited 6950562 = blocked; Hold 7161646 or unmatched gg_id email = pending; anything else = cleared.
+  Index unreadable: identified viewer = cleared.
+- Personal links: env `VIEW_LINK_SECRET` (empty = links off). `?v=<pid>.<exp>.<sig>` (sig over
+  `view1|pid|exp`, 183 d) -> 302 without v + cookie `gg_view` (sig over `viewc1|pid|exp`, 365 d).
+  gg_view is VIEW-ONLY: never signed in, never gg_id, never an SSO token.
+- Gated output uses fixed placeholders in `<span class="gated">`; real values must not appear anywhere
+  in the response. Request logs go through `dg_redacted_event` (no cookies, body, or link/key params).
+- trades-only: `POST /?view=view-link-request` (email-me-a-link, SES, limits in
+  `full-pipeline-cache/deal-gate/requests/`), admin JSON `/?view=view-link`.
+
 ## SECURITY RULES — MANDATORY (read before any change)
 
 This repo is PUBLIC, and so are its GitHub Actions logs. Secrets have leaked from Chad's repos 5-6 times. Never again.
