@@ -9,6 +9,7 @@ import random
 import html as html_mod
 import urllib.request
 import urllib.parse
+import urllib.error
 import boto3
 import logging
 
@@ -1928,6 +1929,52 @@ def _tr_auth_headers():
     return _pipeline_auth_headers()
 
 
+_FIELDS_LABEL_PATHS = {
+    'deal': '/admin/deal_custom_field_labels.json',
+    'person': '/admin/person_custom_field_labels.json',
+    'company': '/admin/company_custom_field_labels.json',
+}
+
+
+def _fields_admin_list(ftype, q=None, get=None):
+    """Admin-only, read-only: all Pipeline custom field labels of one type,
+    every page, sorted by name; optional case-insensitive name filter."""
+    get = get or _tr_pipeline_get
+    base = _FIELDS_LABEL_PATHS[ftype]
+    entries, page, pages = [], 1, 1
+    while page <= pages and page <= 100:
+        data = get(f"{base}?per_page=200&page={page}")
+        if isinstance(data, dict):
+            batch = data.get('entries') or []
+            try:
+                pages = int((data.get('pagination') or {}).get('pages') or 1)
+            except (TypeError, ValueError):
+                pages = 1
+        else:
+            batch, pages = (data or []), 1
+        entries.extend(batch)
+        page += 1
+    needle = (q or '').strip().lower()
+    fields = []
+    for e in entries:
+        if not isinstance(e, dict) or e.get('id') is None:
+            continue
+        name = e.get('name') or ''
+        if needle and needle not in name.lower():
+            continue
+        fields.append({
+            'id': e['id'],
+            'key': f"custom_label_{e['id']}",
+            'name': name,
+            'field_type': e.get('field_type'),
+            'options': [{'id': o.get('id'), 'name': o.get('name')}
+                        for o in (e.get('custom_field_label_dropdown_entries') or [])
+                        if isinstance(o, dict)],
+        })
+    fields.sort(key=lambda f: (f['name'].lower(), str(f['id'])))
+    return {'type': ftype, 'count': len(fields), 'fields': fields}
+
+
 def _tr_admin_check(company_query, deal_id):
     """Admin-only JSON: resolved Transferability field, option map, and the
     matching companies' raw values + their deals' availability."""
@@ -2342,6 +2389,27 @@ def lambda_handler(event, context):
         except Exception as e:
             logger.error(f"transferability check failed: {e}")
             return _json_response(500, {'error': str(e)})
+
+    # Admin-only custom field label list (read-only JSON).
+    if query_params.get('view') == 'fields':
+        _nc = {'Content-Type': 'application/json', 'Cache-Control': 'private, no-store'}
+        if not (_is_admin_key(query_params.get('admin_key'))
+                or _is_admin_key(_get_cookie(event, 'admin_key'))):
+            return {'statusCode': 403, 'headers': _nc, 'body': json.dumps({'error': 'Forbidden'})}
+        _ftype = (query_params.get('type') or 'deal').strip().lower()
+        if _ftype not in _FIELDS_LABEL_PATHS:
+            return {'statusCode': 400, 'headers': _nc,
+                    'body': json.dumps({'error': 'type must be deal, person or company'})}
+        try:
+            _fbody = _fields_admin_list(_ftype, query_params.get('q'))
+            return {'statusCode': 200, 'headers': _nc, 'body': json.dumps(_fbody)}
+        except urllib.error.HTTPError as e:
+            logger.error(f"fields view: Pipeline HTTP {e.code}")
+            _ferr = f"Pipeline HTTP {e.code}"
+        except Exception as e:
+            logger.error(f"fields view: Pipeline request failed ({type(e).__name__})")
+            _ferr = f"Pipeline request failed ({type(e).__name__})"
+        return {'statusCode': 502, 'headers': _nc, 'body': json.dumps({'error': _ferr})}
 
     # TEMP DIAGNOSTIC ROUTE — remove after Explore Similar Companies is built.
     if query_params.get('industries') and _is_admin_key(query_params.get('admin_key')):
