@@ -246,7 +246,7 @@ def _cf_option_ids(value):
     return out
 
 
-def _dg_person_slim(p, cf, source_rule=None):
+def _dg_person_slim(p, cf):
     """(investor level ids, first name, full name, company, emails, hard_blocked)
     for the deal gate."""
     first = (p.get("first_name") or "").strip() if isinstance(p.get("first_name"), str) else ""
@@ -262,7 +262,7 @@ def _dg_person_slim(p, cf, source_rule=None):
     company = company.strip() if isinstance(company, str) else ""
     emails = tuple(sorted(_person_emails(p)))
     return (frozenset(_cf_option_ids(cf.get(INVESTOR_LEVEL_FIELD))), first, name, company,
-            emails, dg_person_hard_blocked(emails, cf, source_rule))
+            emails, dg_person_hard_blocked(emails, cf))
 
 
 def _people_slim_status_index():
@@ -276,11 +276,9 @@ def _people_slim_status_index():
         return cache["by_id"]
     try:
         s3 = boto3.client('s3')
-        source_rule = dg_source_rule(s3)
         head = s3.head_object(Bucket=PEOPLE_SLIM_BUCKET, Key=PEOPLE_SLIM_KEY)
         etag = head.get("ETag")
-        if (cache["by_id"] is not None and etag and etag == cache["etag"]
-                and source_rule == cache.get("dg_source_rule")):
+        if cache["by_id"] is not None and etag and etag == cache["etag"]:
             cache["checked_at"] = now
             return cache["by_id"]
         obj = s3.get_object(Bucket=PEOPLE_SLIM_BUCKET, Key=PEOPLE_SLIM_KEY)
@@ -288,7 +286,7 @@ def _people_slim_status_index():
         by_id = {}
         by_email = {}
         dg_by_id = {}
-        field_counts = {"transactor": 0, "source": 0}
+        field_counts = {"transactor": 0}
         for p in (data.get("people") or []) if isinstance(data, dict) else []:
             if not isinstance(p, dict) or p.get("id") is None:
                 continue
@@ -297,16 +295,14 @@ def _people_slim_status_index():
                                    bool(_cf_option_ids(cf.get(ACCREDITATION_FIELD)) & ACCREDITATION_OK_IDS))
             if not isinstance(cf, dict):
                 cf = {}
-            dg_by_id[str(p["id"])] = _dg_person_slim(p, cf, source_rule)
+            dg_by_id[str(p["id"])] = _dg_person_slim(p, cf)
             if cf.get(DG_TRANSACTOR_FIELD) not in (None, "", []):
                 field_counts["transactor"] += 1
-            if source_rule and cf.get(source_rule["field_key"]) not in (None, "", []):
-                field_counts["source"] += 1
             for em in _person_emails(p):
                 by_email.setdefault(em, set()).add(str(p["id"]))
         cache.update({"etag": etag or obj.get("ETag"), "checked_at": now, "by_id": by_id,
                       "by_email": by_email, "dg_by_id": dg_by_id,
-                      "dg_source_rule": source_rule, "dg_field_counts": field_counts,
+                      "dg_field_counts": field_counts,
                       "last_modified": head.get("LastModified") or obj.get("LastModified")})
         return by_id
     except Exception as e:
@@ -335,6 +331,16 @@ DG_IL_LABELS = {"6950561": "Unknown", "7161646": "Hold: Screen for Substantive",
                 "6950564": "Qualified Purchaser"}
 DG_IL_NON_ACCREDITED = "6950562"
 DG_IL_HOLD = "7161646"
+# "Self-Confirmed Accredited" (cleared, like any level other than Non-Accredited / Hold).
+# Its option id is looked up by name from the live Investor Level field (trades
+# self-confirm route) and added to DG_IL_LABELS at runtime.
+DG_IL_SELF_LABEL = "Self-Confirmed Accredited"
+# Self-confirm: Hold viewers can confirm they are accredited with one click.
+DG_SC_ROUTE = "/?view=self-confirm"
+DG_SC_COOKIE = "gg_sc"           # bridges the people-slim refresh lag (view-only, like gg_view)
+DG_SC_COOKIE_TTL = 12 * 3600
+DG_SC_FORM_TTL = 2 * 3600
+DG_IQF_URL = "https://www.rainmakersecurities.com/investor-qualification-form-for-natural-persons"
 DG_PH_PRICE = "$00.00"
 DG_PH_SIZE = "$000K"
 DG_PH_PCT = "0.0%"
@@ -529,8 +535,8 @@ def dg_level_label(level_ids):
     return " / ".join(DG_IL_LABELS.get(i, f"Other ({i})") for i in ids)
 
 
-# Hard block: Rainmaker staff, brokers and Rainmaker-sourced contacts never see
-# offer terms, whatever their Investor Level. It beats cleared and personal links.
+# Hard block: Rainmaker staff and brokers never see offer terms, whatever their
+# Investor Level. It beats cleared, personal links and self-confirmation.
 DG_HARD_DOMAINS = ("rainmakersecurities.com", "rainmakerapac.com")   # and subdomains
 # Same list as chadgracia/daily-brief MAILER_BLOCK_EMAILS.
 DG_HARD_EMAILS = frozenset({
@@ -546,12 +552,6 @@ DG_HARD_EMAILS = frozenset({
 DG_TRANSACTOR_FIELD = "custom_label_3759163"   # Person: Transactor Type
 # Co-Broker, Foreign Finder, Intermediary - Other
 DG_HARD_TRANSACTOR_IDS = frozenset({"6577160", "6888332", "6888333"})
-# Person field labelled "Source", option "RMS". Ids are resolved live by the trades
-# admin page (?view=deal-gate) and saved here; missing/unreadable = Source rule off.
-DG_SOURCE_LABEL = "Source"
-DG_SOURCE_RMS = "RMS"
-DG_SOURCE_KEY = "deal-gate/source-field.json"
-_DG_FIELD_KEY_RE = re.compile(r"^custom_label_\d{1,12}$")
 
 
 def dg_email_hard_blocked(email):
@@ -567,37 +567,12 @@ def dg_email_hard_blocked(email):
     return bool(domain) and any(domain == d or domain.endswith("." + d) for d in DG_HARD_DOMAINS)
 
 
-def dg_source_rule(s3=None):
-    """{"field_key", "rms_ids"} from s3://full-pipeline-cache/deal-gate/source-field.json,
-    or None (Source rule off). Never raises."""
-    try:
-        s3 = s3 or boto3.client('s3')
-        data = json.loads(s3.get_object(Bucket=DG_BUCKET, Key=DG_SOURCE_KEY)["Body"].read())
-        key = data.get("field_key") if isinstance(data, dict) else None
-        if not isinstance(key, str) or not _DG_FIELD_KEY_RE.match(key):
-            return None
-        ids = frozenset(str(i) for i in (data.get("rms_ids") or []) if str(i).isdigit())
-        return {"field_key": key, "rms_ids": ids}
-    except Exception as e:
-        logger.info(f"deal-gate: Source rule off ({type(e).__name__})")
-        return None
-
-
-def dg_person_hard_blocked(emails, cf, source_rule=None):
-    """Hard block for one person record: Rainmaker/listed email, broker Transactor
-    Type, or Source = RMS."""
+def dg_person_hard_blocked(emails, cf):
+    """Hard block for one person record: Rainmaker/listed email or broker Transactor Type."""
     if any(dg_email_hard_blocked(e) for e in (emails or ())):
         return True
     cf = cf if isinstance(cf, dict) else {}
-    if _cf_option_ids(cf.get(DG_TRANSACTOR_FIELD)) & DG_HARD_TRANSACTOR_IDS:
-        return True
-    if source_rule and source_rule.get("field_key"):
-        vals = _cf_option_ids(cf.get(source_rule["field_key"]))
-        if vals & set(source_rule.get("rms_ids") or ()):
-            return True
-        if any(v.strip().lower() == DG_SOURCE_RMS.lower() for v in vals):
-            return True
-    return False
+    return bool(_cf_option_ids(cf.get(DG_TRANSACTOR_FIELD)) & DG_HARD_TRANSACTOR_IDS)
 
 
 def dg_record_state(rec):
@@ -642,25 +617,79 @@ def dg_state_for_email(email, people):
     return st, (pick[0] if pick else None)
 
 
-def dg_viewer_state(event, view_pid=None):
-    """'anon' | 'pending' | 'blocked' | 'cleared' for a non-admin request.
-    people-slim.json is read only when the request carries an identity."""
+def dg_sc_pid(event, now=None):
+    """Person id from a valid gg_sc cookie (set right after a self-confirmation), else None."""
+    return dg_verify_token(_get_cookie(event, DG_SC_COOKIE), "sc1", now)
+
+
+def dg_viewer_detail(event, view_pid=None):
+    """(state, hold_pids). state is 'anon' | 'pending' | 'blocked' | 'cleared'
+    for a non-admin request; hold_pids are the matched people on Hold, only when
+    the state is 'pending' (they may self-confirm). people-slim.json is read only
+    when the request carries an identity."""
     email = _read_identity_email(event)
     view_pid = view_pid or dg_view_pid(event)
     if not email and not view_pid:
-        return "anon"
+        return "anon", ()
     if email and dg_email_hard_blocked(email):
-        return "blocked"
+        return "blocked", ()
     people = dg_people()
     if people is None:
         logger.warning("deal-gate: people index unreadable; identified viewer treated as cleared")
-        return "cleared"
-    states = []
+        return "cleared", ()
+    dg_by_id = people[1]
+    raw, unmatched = {}, False
     if email:
-        states += list(_dg_email_raw(email, people).values()) or ["pending"]
+        r = _dg_email_raw(email, people)
+        raw.update(r)
+        unmatched = not r
     if view_pid:
-        states.append(dg_record_state(people[1].get(str(view_pid))))
-    return dg_combine(states)
+        raw[str(view_pid)] = dg_record_state(dg_by_id.get(str(view_pid)))
+    sc = dg_sc_pid(event)
+    if sc and raw.get(sc) == "pending" and dg_by_id.get(sc):
+        raw[sc] = "cleared"      # just self-confirmed; people-slim not rebuilt yet
+    state = dg_combine(list(raw.values()) + (["pending"] if unmatched else []))
+    holds = ()
+    if state == "pending":
+        holds = tuple(sorted(p for p, s in raw.items() if s == "pending" and p and dg_by_id.get(p)))
+    return state, holds
+
+
+def dg_viewer_state(event, view_pid=None):
+    """'anon' | 'pending' | 'blocked' | 'cleared' for a non-admin request."""
+    return dg_viewer_detail(event, view_pid)[0]
+
+
+def dg_self_confirm_token(event, view_pid=None, now=None):
+    """Signed form token for the self-confirm button, or None when this viewer
+    may not self-confirm (not pending on a Hold record, or links disabled)."""
+    if not _dg_secret():
+        return None
+    state, holds = dg_viewer_detail(event, view_pid)
+    if state != "pending" or not holds:
+        return None
+    return dg_make_token(holds[0], "scf1", DG_SC_FORM_TTL, now)
+
+
+def dg_sc_cookie(pid, now=None):
+    """Set-Cookie value for gg_sc, or None when links are disabled."""
+    tok = dg_make_token(pid, "sc1", DG_SC_COOKIE_TTL, now)
+    if not tok:
+        return None
+    return (f"{DG_SC_COOKIE}={tok}; Max-Age={DG_SC_COOKIE_TTL}; Path=/; "
+            "Secure; HttpOnly; SameSite=Lax")
+
+
+def dg_mark_cleared(pids, option_id):
+    """After a successful self-confirm: set these people's Investor Level in this
+    warm container's people-slim cache, so they need not wait for the next rebuild."""
+    dg_by_id = _people_slim_cache.get("dg_by_id")
+    if not isinstance(dg_by_id, dict):
+        return
+    for pid in pids or ():
+        rec = dg_by_id.get(str(pid))
+        if rec:
+            dg_by_id[str(pid)] = (frozenset({str(option_id)}),) + tuple(rec[1:])
 
 
 def dg_decide(event, qp, is_admin, view_pid=None):
@@ -722,8 +751,25 @@ function ggGateSubmit(f){
 </script>"""
 
 
-def dg_gate_box(state, dest_url):
-    """The gate box. Copy is fixed; never mentions tracking, the CRM or levels."""
+def dg_gate_box(state, dest_url, confirm_token=None):
+    """The gate box. Copy is fixed; never mentions tracking, the CRM or levels.
+    confirm_token (pending Hold viewers only): show the self-confirm button;
+    'preview' renders it for an admin preview without a token."""
+    if state == "pending" and confirm_token:
+        rel = dest_url[len(DG_SITE):] if dest_url.startswith(DG_SITE) else "/"
+        rel = dg_clean_path(rel or "/", "/")
+        tok = "" if confirm_token == "preview" else confirm_token
+        esc = html_mod.escape
+        return (DG_CSS + '<div class="gate-box">'
+                '<p>Offer terms are shown to accredited investors.</p>'
+                f'<form class="gate-form" method="post" action="{esc(DG_SITE + DG_SC_ROUTE, quote=True)}">'
+                f'<input type="hidden" name="t" value="{esc(tok, quote=True)}">'
+                f'<input type="hidden" name="path" value="{esc(rel, quote=True)}">'
+                '<input type="text" name="website" class="gate-hp" tabindex="-1" autocomplete="off" aria-hidden="true">'
+                '<button type="submit">I confirm I am an accredited investor</button>'
+                '</form>'
+                f'<p>Not sure? <a href="{esc(DG_IQF_URL, quote=True)}">Complete the investor qualification form</a></p>'
+                '</div>')
     if state in ("pending", "blocked"):
         return (DG_CSS + '<div class="gate-box"><p>Thanks for registering. Your access is being '
                 "reviewed and we'll be in touch.</p></div>")
@@ -828,7 +874,7 @@ def dg_redacted_event(event):
 # --- end deal gate shared block ---
 
 
-# --- Deal gate: trades-only routes (admin switch page, link API, email-me-a-link) ---
+# --- Deal gate: trades-only routes (admin switch page, link API, email-me-a-link, self-confirm) ---
 DG_EMAIL_FROM = "Chad Gracia <cgracia@graciagroup.com>"
 DG_EMAIL_REPLY_TO = "cgracia@rainmakersecurities.com"
 DG_EMAIL_BCC = "cgracia@rainmakersecurities.com"
@@ -1002,41 +1048,135 @@ def _dg_view_link_api(event):
     return _dg_json(200, {'matches': matches})
 
 
-def _dg_resolve_source_field(s3=None):
-    """Admin page only: read-only Pipeline lookup of the person field labelled
-    DG_SOURCE_LABEL and its DG_SOURCE_RMS option; saves {"field_key", "rms_ids"}
-    to DG_SOURCE_KEY when it changed. Returns the text for the admin row."""
+DG_SC_PER_PERSON_DAY = 3
+DG_SC_NOTE_CATEGORY = 69759      # same default note category as pipeline-agent add_note
+_dg_sc_option_cache = {'id': None, 'ts': 0.0}
+
+
+def _dg_norm_label(s):
+    return re.sub(r'[\s\-]+', ' ', str(s or '')).strip().lower()
+
+
+def dg_self_confirm_option(now=None):
+    """Option id of DG_IL_SELF_LABEL on the Investor Level field, looked up by name
+    (read-only Pipeline GET), cached 24 h (10 min after a failure). None if not found.
+    Also adds it to DG_IL_LABELS. Never raises."""
+    now = time.time() if now is None else now
+    c = _dg_sc_option_cache
+    if c['ts'] and now - c['ts'] < (86400 if c['id'] else 600):
+        return c['id']
+    c['ts'] = now
     try:
-        s3 = s3 or boto3.client('s3')
-        res = _fields_admin_list('person', DG_SOURCE_LABEL)
+        res = _fields_admin_list('person', 'Investor Level')
+        for f in res.get('fields') or []:
+            if f.get('key') != INVESTOR_LEVEL_FIELD:
+                continue
+            for o in f.get('options') or []:
+                if o.get('id') is not None and _dg_norm_label(o.get('name')) == _dg_norm_label(DG_IL_SELF_LABEL):
+                    c['id'] = int(o['id'])
+                    DG_IL_LABELS[str(c['id'])] = DG_IL_SELF_LABEL
+                    return c['id']
+        logger.warning("deal-gate: Self-Confirmed Accredited option not found")
     except Exception as e:
-        cur = dg_source_rule(s3)
-        return (f"Pipeline lookup failed ({type(e).__name__}); saved rule: "
-                + (f"{cur['field_key']} = {', '.join(sorted(cur['rms_ids'])) or 'text RMS'}" if cur else 'none (off)'))
-    hits = [f for f in res.get('fields') or []
-            if (f.get('name') or '').strip().lower() == DG_SOURCE_LABEL.lower()]
-    if len(hits) != 1:
-        return f"{len(hits)} person fields named exactly \"{DG_SOURCE_LABEL}\"; rule not changed"
-    f = hits[0]
-    ids = sorted(str(o['id']) for o in f.get('options') or []
-                 if o.get('id') is not None
-                 and (o.get('name') or '').strip().lower() == DG_SOURCE_RMS.lower())
-    rule = {'field_key': f['key'], 'rms_ids': frozenset(ids)}
-    desc = (f"{f['key']} ({f.get('field_type') or 'type ?'}); RMS option id: "
-            + (', '.join(ids) if ids else 'none found (matches text "RMS" only)'))
-    if dg_source_rule(s3) != rule:
+        logger.warning(f"deal-gate: Investor Level lookup failed ({type(e).__name__})")
+    return c['id']
+
+
+def _dg_same_site(event):
+    """CSRF: the POST must come from a page on DG_SITE (Origin, else Referer)."""
+    hdrs = {str(k).lower(): str(v) for k, v in (event.get('headers') or {}).items()}
+    origin = hdrs.get('origin')
+    if origin:
+        return origin.rstrip('/') == DG_SITE
+    ref = hdrs.get('referer') or ''
+    return ref == DG_SITE or ref.startswith(DG_SITE + '/')
+
+
+def _dg_sc_back(path, cookies=None, event=None):
+    resp = {'statusCode': 303, 'headers': {'Location': path, 'Cache-Control': 'private, no-store'}, 'body': ''}
+    return dg_add_cookies(resp, event or {}, cookies) if cookies else resp
+
+
+def _dg_sc_failed(path):
+    esc = html_mod.escape
+    return {'statusCode': 200,
+            'headers': {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-store'},
+            'body': ('<!doctype html><html><head><meta charset="utf-8"><meta name="robots" content="noindex">'
+                     '<title>Please try again</title></head>'
+                     '<body style="font-family:Arial,sans-serif;max-width:560px;margin:40px auto;padding:0 16px">'
+                     "<p>We couldn't record your confirmation just now. Please go back and try again.</p>"
+                     f'<p><a href="{esc(path, quote=True)}">Back to the page</a></p></body></html>')}
+
+
+def _dg_self_confirm(event, s3=None, ses=None, now=None):
+    """POST /?view=self-confirm: a viewer on Hold confirms they are accredited.
+    Pipeline PUT of Investor Level = Self-Confirmed Accredited first; only on success:
+    note on the person, warm-cache update, one-line email to Chad, gg_sc cookie and
+    a 303 back to the page. Never logs the address, IP or token."""
+    p = _dg_body_params(event)
+    path = dg_clean_path((p.get('path') or '/').strip(), '/')
+    if not _dg_same_site(event):
+        logger.info("deal-gate: self-confirm refused (cross-site)")
+        return {'statusCode': 403, 'headers': {'Content-Type': 'text/plain; charset=utf-8'}, 'body': 'Forbidden'}
+    try:
+        now = time.time() if now is None else now
+        s3 = s3 or boto3.client('s3')
+        stamp = datetime.fromtimestamp(now, timezone.utc)
+        ip = _dg_client_ip(event)
+        ip_key = f"{DG_REQUESTS_PREFIX}selfconfirm/ip/{stamp.strftime('%Y%m%d%H')}/{_dg_hash(ip)}.json"
+        if not _dg_rate_hit(s3, ip_key, DG_REQUESTS_PER_IP_HOUR):
+            logger.info("deal-gate: self-confirm refused (ip limit)")
+            return _dg_sc_failed(path)
+        if (p.get('website') or '').strip():
+            logger.info("deal-gate: self-confirm ignored (honeypot)")
+            return _dg_sc_back(path)
+        if not _dg_secret():
+            return _dg_sc_failed(path)
+        state, holds = dg_viewer_detail(event)
+        if state != 'pending' or not holds:
+            logger.info(f"deal-gate: self-confirm not applicable ({state})")
+            return _dg_sc_back(path)
+        if dg_verify_token(p.get('t') or '', 'scf1', now) not in holds:
+            logger.info("deal-gate: self-confirm refused (bad or expired form token)")
+            return _dg_sc_failed(path)
+        pid_key = f"{DG_REQUESTS_PREFIX}selfconfirm/pid/{stamp.strftime('%Y%m%d')}/{_dg_hash(holds[0])}.json"
+        if not _dg_rate_hit(s3, pid_key, DG_SC_PER_PERSON_DAY):
+            logger.info("deal-gate: self-confirm refused (person limit)")
+            return _dg_sc_failed(path)
+        opt = dg_self_confirm_option()
+        if not opt:
+            return _dg_sc_failed(path)
+        for pid in holds:
+            _pd_api('PUT', f'/people/{pid}.json',
+                    {'person': {'custom_fields': {INVESTOR_LEVEL_FIELD: opt}}})
+        logger.info(f"deal-gate: self-confirmed accredited ({len(holds)} record(s))")
+    except Exception as e:
+        logger.warning(f"deal-gate: self-confirm failed ({type(e).__name__})")
+        return _dg_sc_failed(path)
+    url = DG_SITE + path
+    ts = stamp.strftime('%Y-%m-%d %H:%M:%S UTC')
+    for pid in holds:
         try:
-            s3.put_object(Bucket=DG_BUCKET, Key=DG_SOURCE_KEY, ContentType='application/json',
-                          Body=json.dumps({'field_key': f['key'], 'rms_ids': ids,
-                                           'field_name': f.get('name'), 'field_type': f.get('field_type'),
-                                           'resolved_at': datetime.now(timezone.utc).isoformat()}).encode())
-            _people_slim_cache['checked_at'] = 0.0   # rebuild the index with the new rule
-            logger.info("deal-gate: Source rule saved")
+            _pd_api('POST', '/notes.json', {'note': {
+                'content': f"Self-confirmed accredited on deal page {url}, {ts}, IP {ip}",
+                'note_category_id': DG_SC_NOTE_CATEGORY, 'person_id': int(pid)}})
         except Exception as e:
-            code = (getattr(e, 'response', None) or {}).get('Error', {}).get('Code') or type(e).__name__
-            logger.warning(f"deal-gate: Source rule write failed ({code})")
-            return desc + f" — NOT saved ({code}); Source rule stays off"
-    return desc
+            logger.warning(f"deal-gate: self-confirm note failed ({type(e).__name__})")
+    dg_mark_cleared(holds, opt)
+    try:
+        people = dg_people()
+        rec = (people[1].get(holds[0]) if people else None) or ((), '', '', '', ())
+        name, company, emails = rec[2], rec[3], rec[4]
+        email = _read_identity_email(event) or (emails[0] if emails else '')
+        line = (f"Self-confirmed accredited: {name or '(no name)'}, {email or '(no email)'}, "
+                f"{company or '(no company)'}, {url}. No action needed; downgrade in Pipeline if wrong.")
+        (ses or boto3.client('ses', region_name='us-east-1')).send_email(
+            Source=DG_EMAIL_FROM, Destination={'ToAddresses': [DG_EMAIL_REPLY_TO]},
+            Message={'Subject': {'Data': f"Self-confirmed accredited: {name or email or holds[0]}", 'Charset': 'UTF-8'},
+                     'Body': {'Text': {'Data': line + "\n", 'Charset': 'UTF-8'}}})
+    except Exception as e:
+        logger.warning(f"deal-gate: self-confirm email failed ({type(e).__name__})")
+    return _dg_sc_back(path, [dg_sc_cookie(holds[0], now)], event)
 
 
 def _dg_admin_page(event, post=False, s3=None):
@@ -1065,7 +1205,7 @@ def _dg_admin_page(event, post=False, s3=None):
     else:
         _dg_switch_cache['checked_at'] = 0.0   # fresh read for the admin view
     enabled = dg_switch_enabled(s3)
-    source_row = _dg_resolve_source_field(s3)
+    sc_opt = dg_self_confirm_option()
     people = dg_people()
     rows = []
     if people is None:
@@ -1085,10 +1225,10 @@ def _dg_admin_page(event, post=False, s3=None):
                  ('People', f"{len(dg_by_id):,}"), ('Emails', f"{len(by_email):,}")]
         rows += [(f"Viewer state: {k}", f"{v:,}") for k, v in st_counts.items()]
         fc = _people_slim_cache.get('dg_field_counts') or {}
-        rows += [('Hard-blocked (Rainmaker/broker/RMS source)', f"{hard:,}"),
+        rows += [('Hard-blocked (Rainmaker/broker)', f"{hard:,}"),
                  ('Records with Transactor Type set', f"{fc.get('transactor', 0):,}"),
-                 ('Source field (RMS rule)', source_row),
-                 ('Records with Source set', f"{fc.get('source', 0):,}")]
+                 (f'Investor Level option "{DG_IL_SELF_LABEL}"',
+                  str(sc_opt) if sc_opt else 'not found (self-confirm button fails safe)')]
         rows += [(f"Investor Level: {k}", f"{v:,}") for k, v in sorted(lvl_counts.items())]
     esc = html_mod.escape
     table = ''.join(f'<tr><th style="text-align:left;padding:4px 12px 4px 0">{esc(k)}</th>'
@@ -3305,9 +3445,11 @@ def lambda_handler(event, context):
         return _dg_view_link_request(event)
     if http_method == 'POST' and _dg_view == 'deal-gate':
         return _dg_admin_page(event, post=True)
+    if http_method == 'POST' and _dg_view == 'self-confirm':
+        return _dg_self_confirm(event)
     if http_method == 'POST':
         return _json_response(405, {'error': 'Method not allowed'})
-    if _dg_view == 'view-link-request':   # GET does nothing
+    if _dg_view in ('view-link-request', 'self-confirm'):   # GET does nothing
         return _json_response(405, {'error': 'Method not allowed'})
 
     # Personal view-only link (?v=) on any page: set gg_view, 302 without v.
@@ -3790,7 +3932,10 @@ def lambda_handler(event, context):
     top_nav_html = _render_top_nav(event, _is_admin, active='indications')
     deal_switcher_html = _render_deal_switcher_modal(_is_admin)
     _dg_hide = ' style="display:none"' if dg_gated else ''
-    _dg_box_html = dg_gate_box(dg_state, DG_SITE + dg_current_path(event, '/')) if dg_gated else ''
+    _dg_sc_tok = None
+    if dg_gated and dg_state == 'pending':
+        _dg_sc_tok = 'preview' if dg_preview else dg_self_confirm_token(event)
+    _dg_box_html = dg_gate_box(dg_state, DG_SITE + dg_current_path(event, '/'), _dg_sc_tok) if dg_gated else ''
     _dg_admin_html = DG_ADMIN_BOX if _is_admin else ''
 
     # GA4 auth event. The Cognito return leg redirects to ?auth=1 (see above), so this

@@ -32,22 +32,28 @@
   when the request carries gg_id / gg_view / gp. Investor Level `custom_label_3923758`:
   Non-Accredited 6950562 = blocked; Hold 7161646 or unmatched gg_id email = pending; anything else = cleared.
   Index unreadable: identified viewer = cleared.
-- Hard block (beats every Investor Level, cleared matches and personal links; viewer just sees the neutral
-  "access is being reviewed" box): a people-slim record is hard-blocked (rec[5]) if any email is
+- Hard block (beats every Investor Level, cleared matches, personal links and self-confirm; viewer just sees
+  the neutral "access is being reviewed" box): a people-slim record is hard-blocked (rec[5]) if any email is
   @rainmakersecurities.com / @rainmakerapac.com (or subdomain) or in `DG_HARD_EMAILS` (= daily-brief
-  MAILER_BLOCK_EMAILS), Transactor Type `custom_label_3759163` has 6577160 / 6888332 / 6888333, or Source = RMS.
+  MAILER_BLOCK_EMAILS), or Transactor Type `custom_label_3759163` has 6577160 / 6888332 / 6888333.
+  There is NO Source = RMS rule (removed; Chad handles RMS-sourced contacts manually).
   The gg_id email itself is checked against the email rules even with no record or an unreadable index.
   `dg_record_state` -> "hard"; `dg_combine`: any "hard" -> "blocked".
-- Source rule: ids live in `s3://full-pipeline-cache/deal-gate/source-field.json` `{"field_key", "rms_ids"}`,
-  written ONLY by trades `/?view=deal-gate` (read-only Pipeline lookup of the person field named exactly
-  "Source", option "RMS"); read in the people-slim pass. Missing/unreadable = Source rule off.
+- Self-confirm: viewers whose state is "pending" AND who match a Hold record (`dg_viewer_detail` -> hold pids)
+  get "I confirm I am an accredited investor" (+ investor qualification form link) instead of the neutral box;
+  unmatched emails, blocked and hard-blocked viewers never see it. The form POSTs to trades `/?view=self-confirm`
+  (Origin/Referer = DG_SITE, signed `scf1` form token bound to the Hold pid, honeypot, S3 limits 10/IP/hour,
+  3/person/day). Pipeline PUT Investor Level = "Self-Confirmed Accredited" (option id looked up by name, cached
+  24 h, added to DG_IL_LABELS; not found = fails safe), then a person note, warm-cache update (`dg_mark_cleared`),
+  one-line SES email to Chad, and a 303 back with cookie `gg_sc` (sig over `sc1|pid|exp`, 12 h) that turns
+  only that pid's "pending" into cleared until people-slim catches up. Self-Confirmed Accredited = cleared.
 - Personal links: env `VIEW_LINK_SECRET` (empty = links off). `?v=<pid>.<exp>.<sig>` (sig over
   `view1|pid|exp`, 183 d) -> 302 without v + cookie `gg_view` (sig over `viewc1|pid|exp`, 365 d).
   gg_view is VIEW-ONLY: never signed in, never gg_id, never an SSO token.
 - Gated output uses fixed placeholders in `<span class="gated">`; real values must not appear anywhere
   in the response. Request logs go through `dg_redacted_event` (no cookies, body, or link/key params).
 - trades-only: `POST /?view=view-link-request` (email-me-a-link, SES, limits in
-  `full-pipeline-cache/deal-gate/requests/`), admin JSON `/?view=view-link`.
+  `full-pipeline-cache/deal-gate/requests/`), `POST /?view=self-confirm`, admin JSON `/?view=view-link`.
 
 ## SECURITY RULES — MANDATORY (read before any change)
 
