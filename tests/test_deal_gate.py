@@ -643,8 +643,9 @@ class SelfConfirmBox(unittest.TestCase):
             hard_reset(lf)
             body = page({"gg_id": gg_id(email)})
             self.assertNotIn(TERM, body)
-            self.assertIn("<h2>One more step to see deal terms</h2>", body, email)
-            self.assertIn("<p>Tell us who you are and we&#x27;ll review your access.</p>", body.replace("we'll", "we&#x27;ll"))
+            self.assertIn("<h2>Request access to deal terms</h2>", body, email)
+            self.assertIn("<p>Securities rules limit pricing to investors we've reviewed. Tell us who you are and "
+                          "we'll reply within one business day.</p>", body.replace("&#x27;", "'"))
             self.assertIn('action="https://trades.graciagroup.com/?view=access-details"', body)
             for f in ('name="first_name" required', 'name="last_name" required', '<select name="country" required>',
                       'name="employer" maxlength="80"', 'value="yes" required> I am an accredited investor',
@@ -666,7 +667,7 @@ class SelfConfirmBox(unittest.TestCase):
                              ({"gg_id": gg_id("hal@x.com")}, {"VIEW_LINK_SECRET": ""})):
             hard_reset(lf)
             body = page(cookies, env=env)
-            self.assertNotIn("One more step to see deal terms", body, cookies)
+            self.assertNotIn("Request access to deal terms", body, cookies)
             self.assertNotIn("access-details", body, cookies)
 
     def test_detail_and_token(self):
@@ -714,7 +715,7 @@ class SelfConfirmBox(unittest.TestCase):
         for switch in (False, True):
             hard_reset(lf, switch=switch)
             body = page({"admin_key": ADMIN}, qp={"gate_preview": "confirm"})
-            self.assertIn("One more step to see deal terms", body)
+            self.assertIn("Request access to deal terms", body)
             self.assertIn('name="t" value=""', body)
             self.assertNotIn(TERM, body)
             hard_reset(lf, switch=switch)
@@ -722,7 +723,7 @@ class SelfConfirmBox(unittest.TestCase):
             self.assertIn(THANKS, body)
             self.assertNotIn("I confirm I am an accredited investor", body)
             hard_reset(lf, switch=switch)
-            self.assertIn("We&#x27;ll review your details and be in touch shortly.".replace("&#x27;", "'"),
+            self.assertIn("We&#x27;ll review your details and email you within one business day.".replace("&#x27;", "'"),
                           page({"admin_key": ADMIN}, qp={"gate_preview": "details-yes"}))
             hard_reset(lf, switch=switch)
             self.assertIn("Please complete the Investor Qualification Form so we can review your access.",
@@ -973,7 +974,7 @@ class FinalLevelRule(unittest.TestCase):
             level_reset(lf)
             body = page({"gg_id": gg_id(email)})
             self.assertEqual(TERM in body, want == "cleared", email)
-            self.assertEqual("One more step to see deal terms" in body,
+            self.assertEqual("Request access to deal terms" in body,
                              email in CONFIRMABLE or email == "nobody@z.com", email)
             self.assertEqual(THANKS in body, email == "selfc@z.com", email)
 
@@ -1147,9 +1148,9 @@ class AccessDetailsRoute(unittest.TestCase):
         # still gated: thank-you, no terms, no form (also from a cold container via gg_ad)
         body = page(hold)
         self.assertNotIn(TERM, body)
-        self.assertIn("Thanks, Hal. We'll review your details and be in touch shortly.", body.replace("&#x27;", "'"))
+        self.assertIn("Thanks, Hal. We'll review your details and email you within one business day.", body.replace("&#x27;", "'"))
         self.assertIn('target="_blank" rel="noopener">Completing the Investor Qualification Form speeds this up', body)
-        self.assertNotIn("One more step", body)
+        self.assertNotIn("Request access to deal terms", body)
         cookie = r["cookies"][0].split(";")[0].split("=", 1)
         level_reset(lf)
         S3.objects.pop((B, QUEUE), None)
@@ -1243,3 +1244,54 @@ class AccessDetailsRoute(unittest.TestCase):
         for _ in range(6):
             r = self.post(hold, self.fields("hold@z.com", accredited="unsure"))
         self.assertIn("couldn&#x27;t save your details", r["body"])   # 5 per address per day
+
+
+class AccessRequestWordingAndLinkedIn(AccessDetailsRoute):
+    def test_form_wording_and_linkedin_field(self):
+        body = page({"gg_id": gg_id("hold@z.com")}).replace("&#x27;", "'")
+        self.assertIn("<h2>Request access to deal terms</h2>", body)
+        self.assertIn("<p>Securities rules limit pricing to investors we've reviewed. Tell us who you are and "
+                      "we'll reply within one business day.</p>", body)
+        self.assertIn('<label class="gate-wide">LinkedIn profile (optional)<input type="text" name="linkedin" '
+                      'maxlength="200" placeholder="linkedin.com/in/yourname"', body)
+        self.assertLess(body.index('name="employer"'), body.index('name="linkedin"'))
+        self.assertNotIn("One more step", body)
+
+    def test_thank_you_wording(self):
+        hold = {"gg_id": gg_id("hold@z.com")}
+        self.post(hold, self.fields("hold@z.com"))
+        self.assertIn("Thanks, Hal. We'll review your details and email you within one business day.",
+                      page(hold).replace("&#x27;", "'"))
+        self.assertIn("Completing the Investor Qualification Form speeds this up", page(hold))
+        level_reset(lf)
+        self.post(hold, self.fields("hold@z.com", accredited="unsure"))
+        body = page(hold).replace("&#x27;", "'")
+        self.assertIn("Thanks, Hal. Please complete the Investor Qualification Form so we can review your access. "
+                      "We'll email you once it's reviewed.", body)
+        self.assertIn('class="gate-btn"', body)
+
+    def test_normalise_linkedin(self):
+        ok = {"linkedin.com/in/hal-hold": "https://www.linkedin.com/in/hal-hold",
+              " https://www.linkedin.com/in/hal ": "https://www.linkedin.com/in/hal",
+              "http://linkedin.com/in/hal/": "https://www.linkedin.com/in/hal/",
+              "www.LinkedIn.com/in/hal?trk=x#y": "https://www.linkedin.com/in/hal",
+              "linkedin.com": "https://www.linkedin.com/"}
+        for raw, want in ok.items():
+            self.assertEqual(lf.dg_normalize_linkedin(raw), want, raw)
+        for bad in ("", "hal", "https://evil.example/linkedin.com/in/hal", "linkedin.com.evil.example/in/x",
+                    "https://uk.linkedin.com/in/x", "javascript:alert(1)//linkedin.com",
+                    'linkedin.com/in/x"><script>', "ftp://linkedin.com/in/x", None, 42):
+            self.assertEqual(lf.dg_normalize_linkedin(bad), "", bad)
+        self.assertEqual(len(lf.dg_normalize_linkedin("linkedin.com/in/" + "a" * 300)), 200)
+
+    def test_linkedin_saved_and_emailed_never_written_to_pipeline(self):
+        self.post({"gg_id": gg_id("hold@z.com")}, self.fields("hold@z.com", linkedin="linkedin.com/in/hal-hold"))
+        self.assertEqual(self.q()["items"]["hold@z.com"]["linkedin"], "https://www.linkedin.com/in/hal-hold")
+        self.assertIn("LinkedIn: https://www.linkedin.com/in/hal-hold", SES.sent[0]["Message"]["Body"]["Text"]["Data"])
+        self.assertNotIn("linkedin", json.dumps([c[2] for c in self.calls]).lower())
+
+    def test_non_linkedin_blanked_submission_succeeds(self):
+        r = self.post({"gg_id": gg_id("hold@z.com")}, self.fields("hold@z.com", linkedin="https://evil.example/x"))
+        self.assertEqual(r["statusCode"], 303)
+        self.assertEqual(self.q()["items"]["hold@z.com"]["linkedin"], "")
+        self.assertIn("LinkedIn: (not given)", SES.sent[0]["Message"]["Body"]["Text"]["Data"])

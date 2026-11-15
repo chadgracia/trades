@@ -36,10 +36,12 @@
 - A valid personal link (gg_view / gp) clears whatever the level, unless that record is hard-blocked or
   Non-Accredited. `s3://full-pipeline-cache/deal-gate/approved.json` `{pid: iso}` (written by daily-brief Approve):
   a pid approved in the last 3 h is cleared unless hard-blocked (cached 60 s, missing = {}).
-- Details form ("One more step to see deal terms") replaces the confirm button: shown to a signed-in pending
+- Details form ("Request access to deal terms" / "Securities rules limit pricing to investors we've reviewed. Tell us
+  who you are and we'll reply within one business day.") replaces the confirm button: shown to a signed-in pending
   viewer with no CRM record or a blank / Unknown / Hold record (`dg_self_confirm_token` -> ("details", adf1 token
   bound to `dg_email_tag(email)`)). First / Last name (required), Country (`DG_COUNTRIES` select), Employer
-  (optional), radio "I am an accredited investor" (yes) / "I'm not sure" (unsure). POST trades `/?view=access-details`
+  (optional), LinkedIn profile (optional; `dg_normalize_linkedin`: linkedin.com only -> https://www.linkedin.com/...,
+  max 200, else saved blank; queue + Chad email only, never Pipeline), radio "I am an accredited investor" (yes) / "I'm not sure" (unsure). POST trades `/?view=access-details`
   (`_dg_access_details`): same-site, honeypot, 10/IP/hour, 5/address/day, signed form token; email from the
   session only; anonymous/cleared/blocked = 403. Fields capped at 80 chars, control chars stripped
   (`dg_clean_field`), escaped on render. Saves first_name, last_name, country, employer, accredited, details_at,
@@ -48,8 +50,8 @@
   blank / Unknown / Hold record = Investor Level Self-Confirmed 7223459 + note, exactly like the confirm button.
   Never creates people or companies. One email to Chad per address per 24 h (`deal-gate/requests/accessdetails/sent/`),
   Review link only when trades has BRIEF_PAGE_URL + BRIEF_PAGE_KEY. NEVER clears the gate. Afterwards the viewer
-  sees "Thanks, <first>. We'll review your details..." (yes) or "...Please complete the Investor Qualification
-  Form..." (unsure), from the queue item (cached 60 s) or the `gg_ad` cookie (answer only, 7 d).
+  sees "Thanks, <first>. We'll review your details and email you within one business day." (yes) or "...Please
+  complete the Investor Qualification Form so we can review your access. We'll email you once it's reviewed." (unsure), from the queue item (cached 60 s) or the `gg_ad` cookie (answer only, 7 d).
   The old `POST /?view=self-confirm` route still works; Self-Confirmed viewers without details see `DG_SC_THANKS_TEXT`.
   Previews: `&gate_preview=confirm` (form), `confirmed`, `details-yes`, `details-unsure`.
 - Access queue `s3://full-pipeline-cache/deal-gate/queue.json` `{"items": {email: {email, person_id, reason,
@@ -57,7 +59,8 @@
   trades (self-confirm; first gated grid load) AND CRMDealDetails (first gated deal-page load): switch ON, a
   signed-in viewer with no record or a Hold record = "signup", once per email; never anonymous; declined emails
   only return by self-confirming. Fail-soft, one log line, no address logged.
-  daily-brief reads it and Approves (Substantive + approved.json) / Declines (Hold + declined).
+  daily-brief reads it and Approves (Substantive + approved.json, then ONE "Your access is approved" email to
+  that address from MAILER_FROM with a link to the saved /deal/<id> or the grid) / Declines (Hold + declined, no email).
 - Hard block (beats every Investor Level, cleared matches, personal links and self-confirm; viewer just sees
   the neutral "access is being reviewed" box): a people-slim record is hard-blocked (rec[5]) if any email is
   @rainmakersecurities.com / @rainmakerapac.com (or subdomain) or in `DG_HARD_EMAILS` (= daily-brief
