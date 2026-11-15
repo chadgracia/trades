@@ -260,7 +260,7 @@ class GatedList(unittest.TestCase):
     def test_gate_box_above_table(self):
         reset(lf, switch=True)
         body = run(lf)["body"]
-        self.assertLess(body.index("Offer terms are shown to investors we work with"), body.index('<table id="dealsTable">'))
+        self.assertLess(body.index("Deal terms are shown to investors we work with"), body.index('<table id="dealsTable">'))
         reset(lf, switch=True)
         body = run(lf, cookies={"gg_id": gg_id("ned@x.com")})["body"]
         self.assertIn("Thanks for registering. Your access is being reviewed and we'll be in touch.", body)
@@ -404,7 +404,7 @@ class LinkRequest(unittest.TestCase):
         self.assertTrue(text.startswith("Hello Ann,\n\nHere is your personal link to current offers:\n"
                                         "https://trades.graciagroup.com/deal/9?x=1&v=101."))
         self.assertTrue(text.endswith(
-            "\n\nIt opens the page you were viewing. Once you open it, offer terms on every deal page stay "
+            "\n\nIt opens the page you were viewing. Once you open it, deal terms on every deal page stay "
             "visible on this device and browser for six months, so you won't need to do this again for "
             "other deals. If you use another device, request a new link there.\n\n"
             "Please don't forward this link; it is tied to you.\n\nBest wishes,\nChad Gracia\n"))
@@ -643,7 +643,7 @@ class SelfConfirmBox(unittest.TestCase):
             hard_reset(lf)
             body = page({"gg_id": gg_id(email)})
             self.assertNotIn(TERM, body)
-            self.assertIn("<h2>One more step to see offer terms</h2>", body, email)
+            self.assertIn("<h2>One more step to see deal terms</h2>", body, email)
             self.assertIn("<p>Tell us who you are and we&#x27;ll review your access.</p>", body.replace("we'll", "we&#x27;ll"))
             self.assertIn('action="https://trades.graciagroup.com/?view=access-details"', body)
             for f in ('name="first_name" required', 'name="last_name" required', '<select name="country" required>',
@@ -666,7 +666,7 @@ class SelfConfirmBox(unittest.TestCase):
                              ({"gg_id": gg_id("hal@x.com")}, {"VIEW_LINK_SECRET": ""})):
             hard_reset(lf)
             body = page(cookies, env=env)
-            self.assertNotIn("One more step to see offer terms", body, cookies)
+            self.assertNotIn("One more step to see deal terms", body, cookies)
             self.assertNotIn("access-details", body, cookies)
 
     def test_detail_and_token(self):
@@ -714,7 +714,7 @@ class SelfConfirmBox(unittest.TestCase):
         for switch in (False, True):
             hard_reset(lf, switch=switch)
             body = page({"admin_key": ADMIN}, qp={"gate_preview": "confirm"})
-            self.assertIn("One more step to see offer terms", body)
+            self.assertIn("One more step to see deal terms", body)
             self.assertIn('name="t" value=""', body)
             self.assertNotIn(TERM, body)
             hard_reset(lf, switch=switch)
@@ -890,7 +890,7 @@ class LinkEmailAndRedaction(unittest.TestCase):
         self.assertEqual(lf.dg_email_text("Ann", "https://trades.graciagroup.com/deal/1?v=x"),
                          "Hello Ann,\n\nHere is your personal link to current offers:\n"
                          "https://trades.graciagroup.com/deal/1?v=x\n\n"
-                         "It opens the page you were viewing. Once you open it, offer terms on every deal page stay "
+                         "It opens the page you were viewing. Once you open it, deal terms on every deal page stay "
                          "visible on this device and browser for six months, so you won't need to do this again for "
                          "other deals. If you use another device, request a new link there.\n\n"
                          "Please don't forward this link; it is tied to you.\n\n"
@@ -973,7 +973,7 @@ class FinalLevelRule(unittest.TestCase):
             level_reset(lf)
             body = page({"gg_id": gg_id(email)})
             self.assertEqual(TERM in body, want == "cleared", email)
-            self.assertEqual("One more step to see offer terms" in body,
+            self.assertEqual("One more step to see deal terms" in body,
                              email in CONFIRMABLE or email == "nobody@z.com", email)
             self.assertEqual(THANKS in body, email == "selfc@z.com", email)
 
@@ -1063,7 +1063,7 @@ class AnonBoxCopy(unittest.TestCase):
         level_reset(lf)
         body = page({})
         box = body.split('<div class="gate-box">', 1)[1]
-        self.assertIn("<h2>Offer terms are shown to investors we work with</h2>", box)
+        self.assertIn("<h2>Deal terms are shown to investors we work with</h2>", box)
         self.assertIn('<p class="gate-l1">Already a client? Enter your email for a one-click link.</p>', box)
         self.assertIn('<button type="submit">Send link</button>', box)
         self.assertIn("<div class=\"gate-new\"><p>New here? Create a login and we'll review your access.</p>", box)

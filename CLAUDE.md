@@ -36,7 +36,7 @@
 - A valid personal link (gg_view / gp) clears whatever the level, unless that record is hard-blocked or
   Non-Accredited. `s3://full-pipeline-cache/deal-gate/approved.json` `{pid: iso}` (written by daily-brief Approve):
   a pid approved in the last 3 h is cleared unless hard-blocked (cached 60 s, missing = {}).
-- Details form ("One more step to see offer terms") replaces the confirm button: shown to a signed-in pending
+- Details form ("One more step to see deal terms") replaces the confirm button: shown to a signed-in pending
   viewer with no CRM record or a blank / Unknown / Hold record (`dg_self_confirm_token` -> ("details", adf1 token
   bound to `dg_email_tag(email)`)). First / Last name (required), Country (`DG_COUNTRIES` select), Employer
   (optional), radio "I am an accredited investor" (yes) / "I'm not sure" (unsure). POST trades `/?view=access-details`
@@ -74,7 +74,7 @@
   API Gateway "Trades" (HTTP proxy -> Function URL): the Lambda sees rawPath "/" and ?deal_id=, so
   CRMDealDetails passes `public_path="/deal/{id}"`, `drop=("deal_id",)` to dg_link_redirect / dg_current_path.
   Never rebuild a public URL from the event path in CRMDealDetails.
-- Anonymous gate box: "Offer terms are shown to investors we work with"; "Already a client? Enter your email for
+- Anonymous gate box: "Deal terms are shown to investors we work with"; "Already a client? Enter your email for
   a one-click link." + Send link; "New here? Create a login and we'll review your access." + Request access button
   (`.gate-btn`, Cognito sign-up URL); after Send link: "If that address is on file, a link is on its way. Not a
   client yet?" + the same button.

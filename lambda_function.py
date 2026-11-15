@@ -311,7 +311,7 @@ def _people_slim_status_index():
 
 
 # --- Deal gate (shared verbatim with chadgracia/trades and chadgracia/CRMDealDetails) ---
-# Offer terms are shown only to recognised investors. The switch lives in
+# Deal terms are shown only to recognised investors. The switch lives in
 # s3://full-pipeline-cache/deal-gate.json; with it off nothing changes for
 # non-admins. gg_view (personal view-only links) only ever unlocks terms: it is
 # never treated as signed in, never minted into gg_id and never yields an SSO token.
@@ -648,7 +648,7 @@ def dg_level_label(level_ids):
     return " / ".join(DG_IL_LABELS.get(i, f"Other ({i})") for i in ids)
 
 
-# Hard block: Rainmaker staff and brokers never see offer terms, whatever their
+# Hard block: Rainmaker staff and brokers never see deal terms, whatever their
 # Investor Level. It beats cleared, personal links and self-confirmation.
 DG_HARD_DOMAINS = ("rainmakersecurities.com", "rainmakerapac.com")   # and subdomains
 # Same list as chadgracia/daily-brief MAILER_BLOCK_EMAILS.
@@ -978,7 +978,7 @@ def dg_gate_box(state, dest_url, confirm_token=None):
         rel = dg_clean_path(rel or "/", "/")
         opts = "".join(f'<option value="{esc(c, quote=True)}">{esc(c)}</option>' for c in DG_COUNTRIES)
         return (DG_CSS + '<div class="gate-box">'
-                '<h2>One more step to see offer terms</h2>'
+                '<h2>One more step to see deal terms</h2>'
                 "<p>Tell us who you are and we'll review your access.</p>"
                 f'<form class="gate-details" method="post" action="{esc(DG_SITE + DG_AD_ROUTE, quote=True)}">'
                 f'<input type="hidden" name="t" value="{esc(confirm_token[1] or "", quote=True)}">'
@@ -999,7 +999,7 @@ def dg_gate_box(state, dest_url, confirm_token=None):
         rel = dg_clean_path(rel or "/", "/")
         tok = "" if confirm_token == "preview" else confirm_token
         return (DG_CSS + '<div class="gate-box">'
-                '<p>Offer terms are shown to accredited investors.</p>'
+                '<p>Deal terms are shown to accredited investors.</p>'
                 f'<form class="gate-form" method="post" action="{esc(DG_SITE + DG_SC_ROUTE, quote=True)}">'
                 f'<input type="hidden" name="t" value="{esc(tok, quote=True)}">'
                 f'<input type="hidden" name="path" value="{esc(rel, quote=True)}">'
@@ -1014,7 +1014,7 @@ def dg_gate_box(state, dest_url, confirm_token=None):
     signup = html_mod.escape(dg_signup_url(dest_url), quote=True)
     return (DG_CSS + DG_JS
             + '<div class="gate-box">'
-            '<h2>Offer terms are shown to investors we work with</h2>'
+            '<h2>Deal terms are shown to investors we work with</h2>'
             '<p class="gate-l1">Already a client? Enter your email for a one-click link.</p>'
             '<form class="gate-form" method="post" onsubmit="return ggGateSubmit(this)">'
             '<input type="email" name="email" required placeholder="Email" aria-label="Email">'
@@ -1356,7 +1356,7 @@ def _dg_hash(value):
 def dg_email_text(first_name, link):
     hello = f"Hello {first_name}," if first_name else "Hello,"
     return (f"{hello}\n\nHere is your personal link to current offers:\n{link}\n\n"
-            "It opens the page you were viewing. Once you open it, offer terms on every deal page stay "
+            "It opens the page you were viewing. Once you open it, deal terms on every deal page stay "
             "visible on this device and browser for six months, so you won't need to do this again for "
             "other deals. If you use another device, request a new link there.\n\n"
             "Please don't forward this link; it is tied to you.\n\n"
@@ -4314,7 +4314,7 @@ def lambda_handler(event, context):
     # GET path: render the HTML dashboard as before.
     _grid_is_admin = (_is_admin_key(query_params.get('admin_key'))
                       or _is_admin_key(_get_cookie(event, 'admin_key')))
-    # Deal gate: withhold offer terms from viewers who are not cleared (switch
+    # Deal gate: withhold deal terms from viewers who are not cleared (switch
     # ON), or as an admin preview (&gate_preview=...), which renders as that viewer.
     dg_gated, dg_state, dg_preview = dg_decide(event, query_params, _grid_is_admin)
     if dg_preview:
