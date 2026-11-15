@@ -36,10 +36,22 @@
 - A valid personal link (gg_view / gp) clears whatever the level, unless that record is hard-blocked or
   Non-Accredited. `s3://full-pipeline-cache/deal-gate/approved.json` `{pid: iso}` (written by daily-brief Approve):
   a pid approved in the last 3 h is cleared unless hard-blocked (cached 60 s, missing = {}).
-- Self-confirm (trades `POST /?view=self-confirm`): button only for a pending viewer matching a blank / Unknown /
-  Hold record. Writes Investor Level = Self-Confirmed 7223459, note, email to Chad, queue entry. NEVER clears:
-  Self-Confirmed viewers (and gg_sc, which now only marks "just confirmed") see `DG_SC_THANKS_TEXT`.
-  Previews: `&gate_preview=confirm` (button) and `confirmed` (thank-you).
+- Details form ("One more step to see offer terms") replaces the confirm button: shown to a signed-in pending
+  viewer with no CRM record or a blank / Unknown / Hold record (`dg_self_confirm_token` -> ("details", adf1 token
+  bound to `dg_email_tag(email)`)). First / Last name (required), Country (`DG_COUNTRIES` select), Employer
+  (optional), radio "I am an accredited investor" (yes) / "I'm not sure" (unsure). POST trades `/?view=access-details`
+  (`_dg_access_details`): same-site, honeypot, 10/IP/hour, 5/address/day, signed form token; email from the
+  session only; anonymous/cleared/blocked = 403. Fields capped at 80 chars, control chars stripped
+  (`dg_clean_field`), escaped on render. Saves first_name, last_name, country, employer, accredited, details_at,
+  from (path) on the queue item (`dg_queue_details`; declined addresses not re-added). Pipeline (existing person
+  only): first/last name only where blank or a placeholder (`dg_name_is_placeholder`); an accredited "yes" on a
+  blank / Unknown / Hold record = Investor Level Self-Confirmed 7223459 + note, exactly like the confirm button.
+  Never creates people or companies. One email to Chad per address per 24 h (`deal-gate/requests/accessdetails/sent/`),
+  Review link only when trades has BRIEF_PAGE_URL + BRIEF_PAGE_KEY. NEVER clears the gate. Afterwards the viewer
+  sees "Thanks, <first>. We'll review your details..." (yes) or "...Please complete the Investor Qualification
+  Form..." (unsure), from the queue item (cached 60 s) or the `gg_ad` cookie (answer only, 7 d).
+  The old `POST /?view=self-confirm` route still works; Self-Confirmed viewers without details see `DG_SC_THANKS_TEXT`.
+  Previews: `&gate_preview=confirm` (form), `confirmed`, `details-yes`, `details-unsure`.
 - Access queue `s3://full-pipeline-cache/deal-gate/queue.json` `{"items": {email: {email, person_id, reason,
   first_at, last_at}}, "declined": {email: iso}}`: written via the shared `dg_queue_add` / `dg_queue_signup` by
   trades (self-confirm; first gated grid load) AND CRMDealDetails (first gated deal-page load): switch ON, a

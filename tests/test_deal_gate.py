@@ -142,6 +142,7 @@ def reset(mod, switch=None, slim=True):
         mod._dg_switch_cache.update({"enabled": None, "checked_at": 0.0})
         mod._dg_approved_cache.update({"ids": {}, "checked_at": 0.0})
         mod._dg_queue_seen.clear()
+        mod._dg_queue_cache.update({"data": None, "checked_at": 0.0})
         mod._people_slim_cache.update({"etag": None, "checked_at": 0.0, "by_id": None, "by_email": None,
                                        "dg_by_id": None, "last_modified": None})
     mod._PUBLIC_DEAL_INDEX_CACHE.update({"ts": 0.0, "rows": []})
@@ -637,35 +638,36 @@ def form_token(body):
 
 
 class SelfConfirmBox(unittest.TestCase):
-    def test_hold_viewer_gets_button_not_terms(self):
-        exp = int(time.time()) + 3600
-        for cookies, pid in (({"gg_id": gg_id("hal@x.com")}, "102"), ({"gg_id": gg_id("bea@x.com")}, "104")):
+    def test_details_form_for_signed_in_pending_viewers(self):
+        for email in ("hal@x.com", "bea@x.com", "nobody@x.com"):      # Hold, blank, no CRM record
             hard_reset(lf)
-            body = page(cookies)
+            body = page({"gg_id": gg_id(email)})
             self.assertNotIn(TERM, body)
-            self.assertIn("<p>Offer terms are shown to accredited investors.</p>", body)
-            self.assertIn('<button type="submit">I confirm I am an accredited investor</button>', body)
-            self.assertIn('action="https://trades.graciagroup.com/?view=self-confirm"', body)
-            self.assertIn('Not sure? <a href="https://www.rainmakersecurities.com/investor-qualification-form-for-natural-persons">'
-                          'Complete the investor qualification form</a>', body)
-            self.assertIn('name="website" class="gate-hp"', body)
-            self.assertNotIn("Your access is being reviewed", body)
+            self.assertIn("<h2>One more step to see offer terms</h2>", body, email)
+            self.assertIn("<p>Tell us who you are and we&#x27;ll review your access.</p>", body.replace("we'll", "we&#x27;ll"))
+            self.assertIn('action="https://trades.graciagroup.com/?view=access-details"', body)
+            for f in ('name="first_name" required', 'name="last_name" required', '<select name="country" required>',
+                      'name="employer" maxlength="80"', 'value="yes" required> I am an accredited investor',
+                      "value=\"unsure\"> I'm not sure", '<button type="submit">Submit</button>',
+                      'name="website" class="gate-hp"'):
+                self.assertIn(f, body, (email, f))
+            self.assertNotIn("I confirm I am an accredited investor", body)
+            self.assertNotIn("Thanks for registering", body)
             with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
-                self.assertEqual(lf.dg_verify_token(form_token(body), "scf1"), pid)
+                self.assertEqual(lf.dg_verify_token(form_token(body), "adf1"), lf.dg_email_tag(email))
 
-    def test_no_button_for_blocked_hard_unmatched_or_no_secret(self):
-        for cookies, env in (({"gg_id": gg_id("ned@x.com")}, None),                 # Non-Accredited
+    def test_no_form_for_anon_cleared_blocked_hard_other_or_no_secret(self):
+        for cookies, env in (({}, None), ({"gg_id": gg_id("ann@x.com")}, None),     # anonymous, cleared
+                             ({"gg_id": gg_id("ned@x.com")}, None),                 # Non-Accredited
                              ({"gg_id": gg_id("rob@rainmakersecurities.com")}, None),  # hard block
                              ({"gg_id": gg_id("cob@y.com")}, None),                 # broker
                              ({"gg_id": gg_id("dup@y.com")}, None),                 # hard + cleared
-                             ({"gg_id": gg_id("nobody@x.com")}, None),              # pending, no record
+                             ({"gg_id": gg_id("sam@x.com")}, None),                 # other level value
                              ({"gg_id": gg_id("hal@x.com")}, {"VIEW_LINK_SECRET": ""})):
             hard_reset(lf)
             body = page(cookies, env=env)
-            self.assertNotIn(TERM, body)
-            self.assertIn("Your access is being reviewed", body, cookies)
-            self.assertNotIn("I confirm I am an accredited investor", body, cookies)
-            self.assertNotIn("self-confirm", body)
+            self.assertNotIn("One more step to see offer terms", body, cookies)
+            self.assertNotIn("access-details", body, cookies)
 
     def test_detail_and_token(self):
         hard_reset(lf)
@@ -712,13 +714,19 @@ class SelfConfirmBox(unittest.TestCase):
         for switch in (False, True):
             hard_reset(lf, switch=switch)
             body = page({"admin_key": ADMIN}, qp={"gate_preview": "confirm"})
-            self.assertIn("I confirm I am an accredited investor", body)
+            self.assertIn("One more step to see offer terms", body)
             self.assertIn('name="t" value=""', body)
             self.assertNotIn(TERM, body)
             hard_reset(lf, switch=switch)
             body = page({"admin_key": ADMIN}, qp={"gate_preview": "confirmed"})
             self.assertIn(THANKS, body)
             self.assertNotIn("I confirm I am an accredited investor", body)
+            hard_reset(lf, switch=switch)
+            self.assertIn("We&#x27;ll review your details and be in touch shortly.".replace("&#x27;", "'"),
+                          page({"admin_key": ADMIN}, qp={"gate_preview": "details-yes"}))
+            hard_reset(lf, switch=switch)
+            self.assertIn("Please complete the Investor Qualification Form so we can review your access.",
+                          page({"admin_key": ADMIN}, qp={"gate_preview": "details-unsure"}))
             for prev in ("pending", "blocked"):
                 hard_reset(lf, switch=switch)
                 body = page({"admin_key": ADMIN}, qp={"gate_preview": prev})
@@ -753,8 +761,10 @@ class SelfConfirmRoute(unittest.TestCase):
             return run(lf, qp={"view": "self-confirm"}, cookies=cookies, method="POST", body=body, headers=hdrs)
 
     def hal_token(self):
+        # The page now shows the details form; the old self-confirm route still
+        # accepts a scf1 token bound to the Hold pid.
         with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
-            return lf.dg_self_confirm_token(event(None, {"gg_id": gg_id("hal@x.com")}))
+            return lf.dg_make_token("102", "scf1", lf.DG_SC_FORM_TTL)
 
     def test_success_put_note_email_cookie_redirect(self):
         hal = {"gg_id": gg_id("hal@x.com")}
@@ -963,7 +973,8 @@ class FinalLevelRule(unittest.TestCase):
             level_reset(lf)
             body = page({"gg_id": gg_id(email)})
             self.assertEqual(TERM in body, want == "cleared", email)
-            self.assertEqual("I confirm I am an accredited investor" in body, email in CONFIRMABLE, email)
+            self.assertEqual("One more step to see offer terms" in body,
+                             email in CONFIRMABLE or email == "nobody@z.com", email)
             self.assertEqual(THANKS in body, email == "selfc@z.com", email)
 
     def test_personal_link_clears_any_level_but_nonaccredited_or_hard(self):
@@ -1063,3 +1074,172 @@ class AnonBoxCopy(unittest.TestCase):
         self.assertIn("querySelectorAll('.gate-l1,.gate-new')", body)
         self.assertNotIn("Already working with us", body)
         self.assertNotIn(TERM, body)
+
+
+class AccessDetailsRoute(unittest.TestCase):
+    def setUp(self):
+        level_reset(lf)
+        self.calls = []
+        self.person = {"first_name": ".", "last_name": "(unverified)"}
+
+    def api(self, method, path, payload=None):
+        self.calls.append((method, path, payload))
+        if method == "GET":
+            return {"person": dict(self.person)}
+        return {"id": 1}
+
+    def form_tok(self, email, now=None):
+        with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            return lf.dg_make_token(lf.dg_email_tag(email), "adf1", lf.DG_SC_FORM_TTL, now)
+
+    def post(self, cookies, fields, origin="https://trades.graciagroup.com", now=None):
+        body = urllib.parse.urlencode(fields)
+        hdrs = {"content-type": "application/x-www-form-urlencoded"}
+        if origin:
+            hdrs["origin"] = origin
+        with mock.patch.object(lf, "_pd_api", self.api), \
+                mock.patch.object(lf.time, "time", (lambda: now) if now else time.time):
+            return run(lf, qp={"view": "access-details"}, cookies=cookies, method="POST", body=body, headers=hdrs)
+
+    def fields(self, who, now=None, **kw):
+        f = {"t": self.form_tok(who, now), "path": "/deal/9?x=1&v=zz", "website": "", "first_name": "Hal",
+             "last_name": "Hold", "country": "Canada", "employer": "Hold Co", "accredited": "yes"}
+        f.update(kw)
+        return f
+
+    def q(self):
+        return json.loads(S3.objects[(B, QUEUE)])
+
+    def test_rejects_anonymous_cleared_blocked_cross_site_and_get(self):
+        f = self.fields("hal@z.com")
+        self.assertEqual(self.post({}, f)["statusCode"], 403)
+        for em in ("ai@z.com", "qp@z.com", "nonacc@z.com", "rob@rainmakersecurities.com"):
+            level_reset(lf)
+            self.assertEqual(self.post({"gg_id": gg_id(em)}, self.fields(em))["statusCode"], 403, em)
+        self.assertEqual(self.post({"gg_id": gg_id("hold@z.com")}, self.fields("hold@z.com"),
+                                   origin="https://evil.example")["statusCode"], 403)
+        self.assertEqual(run(lf, qp={"view": "access-details"})["statusCode"], 405)
+        self.assertNotIn(QUEUE, S3.puts)
+        self.assertEqual((self.calls, SES.sent), ([], []))
+
+    def test_token_bound_to_session_email(self):
+        r = self.post({"gg_id": gg_id("hold@z.com")}, self.fields("other@z.com"))
+        self.assertIn("couldn&#x27;t save your details", r["body"])
+        self.assertNotIn(QUEUE, S3.puts)
+
+    def test_saved_to_queue_and_terms_still_blurred(self):
+        hold = {"gg_id": gg_id("hold@z.com")}
+        with self.assertLogs(level="INFO") as logs:
+            r = self.post(hold, self.fields("hold@z.com", email="spoof@evil.example"))
+        self.assertEqual(r["statusCode"], 303)
+        self.assertEqual(r["headers"]["Location"], "https://trades.graciagroup.com/deal/9?x=1")
+        it = self.q()["items"]["hold@z.com"]
+        for k, v in (("first_name", "Hal"), ("last_name", "Hold"), ("country", "Canada"), ("employer", "Hold Co"),
+                     ("accredited", "yes"), ("from", "/deal/9?x=1"), ("person_id", "302"),
+                     ("reason", "self-confirmed")):
+            self.assertEqual(it[k], v, k)
+        self.assertTrue(it["details_at"])
+        self.assertNotIn("spoof@evil.example", json.dumps(self.q()))
+        # accredited tick recorded like the confirm button: level Self-Confirmed + note
+        put = [c for c in self.calls if c[0] == "PUT"][0]
+        self.assertEqual(put[2]["person"]["custom_fields"], {"custom_label_3923758": 7223459})
+        self.assertTrue(any(c[1] == "/notes.json" for c in self.calls))
+        # still gated: thank-you, no terms, no form (also from a cold container via gg_ad)
+        body = page(hold)
+        self.assertNotIn(TERM, body)
+        self.assertIn("Thanks, Hal. We'll review your details and be in touch shortly.", body.replace("&#x27;", "'"))
+        self.assertIn('target="_blank" rel="noopener">Completing the Investor Qualification Form speeds this up', body)
+        self.assertNotIn("One more step", body)
+        cookie = r["cookies"][0].split(";")[0].split("=", 1)
+        level_reset(lf)
+        S3.objects.pop((B, QUEUE), None)
+        body = page(dict(hold, **{cookie[0]: cookie[1]}))
+        self.assertNotIn(TERM, body)
+        self.assertIn("We'll review your details", body.replace("&#x27;", "'"))
+        joined = "\n".join(l for l in logs.output if "deal-gate" in l)
+        self.assertIn("access details saved", joined)
+        for secret in ("Hal", "Hold Co", "hold@z.com", "1.2.3.4", "Canada"):
+            self.assertNotIn(secret, joined)
+
+    def test_unsure_answer_thank_you_and_no_level(self):
+        hold = {"gg_id": gg_id("hold@z.com")}
+        self.post(hold, self.fields("hold@z.com", accredited="unsure"))
+        put = [c for c in self.calls if c[0] == "PUT"][0]
+        self.assertNotIn("custom_fields", put[2]["person"])
+        body = page(hold)
+        self.assertIn("Thanks, Hal. Please complete the Investor Qualification Form so we can review your access.", body)
+        self.assertIn('<a class="gate-btn" href="https://www.rainmakersecurities.com/investor-qualification-form-for-natural-persons" '
+                      'target="_blank" rel="noopener">', body)
+        self.assertEqual(self.q()["items"]["hold@z.com"]["reason"], "signup")
+
+    def test_real_name_kept_placeholder_replaced(self):
+        self.person = {"first_name": "Harold", "last_name": "Unknown"}
+        self.post({"gg_id": gg_id("hold@z.com")}, self.fields("hold@z.com", accredited="unsure"))
+        put = [c for c in self.calls if c[0] == "PUT"][0][2]["person"]
+        self.assertEqual(put, {"last_name": "Hold"})
+        self.calls.clear()
+        level_reset(lf)
+        self.person = {"first_name": "Harold", "last_name": "Holden"}
+        self.post({"gg_id": gg_id("hold@z.com")}, self.fields("hold@z.com", accredited="unsure"))
+        self.assertEqual([c for c in self.calls if c[0] == "PUT"], [])
+        for ph in ("", ".", "Unknown", "(unverified)", " n/a "):
+            self.assertTrue(lf.dg_name_is_placeholder(ph), ph)
+        self.assertFalse(lf.dg_name_is_placeholder("Ann"))
+
+    def test_no_crm_record_queue_only(self):
+        self.post({"gg_id": gg_id("newbie@z.com")}, self.fields("newbie@z.com"))
+        self.assertEqual(self.calls, [])
+        it = self.q()["items"]["newbie@z.com"]
+        self.assertEqual((it["person_id"], it["first_name"]), (None, "Hal"))
+        self.assertIn("Pipeline: not in Pipeline yet", SES.sent[0]["Message"]["Body"]["Text"]["Data"])
+
+    def test_one_email_per_24_hours(self):
+        hold = {"gg_id": gg_id("hold@z.com")}
+        t0 = time.time()
+        self.post(hold, self.fields("hold@z.com"), now=t0)
+        self.assertEqual(len(SES.sent), 1)
+        m = SES.sent[0]
+        self.assertEqual(m["Destination"], {"ToAddresses": [lf.DG_EMAIL_REPLY_TO]})
+        self.assertEqual(m["Message"]["Subject"]["Data"], "Access request: Hal Hold")
+        text = m["Message"]["Body"]["Text"]["Data"]
+        for s in ("Name: Hal Hold", "Email: hold@z.com", "Country: Canada", "Employer: Hold Co", "Accredited: Yes",
+                  "From: https://trades.graciagroup.com/deal/9?x=1", "Pipeline: https://app.pipelinecrm.com/people/302"):
+            self.assertIn(s, text)
+        self.assertNotIn("Review:", text)          # no brief URL/key env vars on trades
+        self.post(hold, self.fields("hold@z.com", now=t0 + 3600), now=t0 + 3600)
+        self.assertEqual(len(SES.sent), 1)
+        self.post(hold, self.fields("hold@z.com", now=t0 + 25 * 3600), now=t0 + 25 * 3600)
+        self.assertEqual(len(SES.sent), 2)
+
+    def test_declined_not_requeued_and_not_emailed(self):
+        S3.objects[(B, QUEUE)] = json.dumps({"items": {}, "declined": {"hold@z.com": "2030-01-01T00:00:00+00:00"}}).encode()
+        r = self.post({"gg_id": gg_id("hold@z.com")}, self.fields("hold@z.com"))
+        self.assertEqual(r["statusCode"], 303)
+        self.assertEqual(self.q()["items"], {})
+        self.assertEqual((self.calls, SES.sent), ([], []))
+
+    def test_validation_caps_and_escapes(self):
+        hold = {"gg_id": gg_id("hold@z.com")}
+        for bad in ({"first_name": ""}, {"last_name": "  "}, {"country": "Narnia"}, {"accredited": "maybe"}):
+            level_reset(lf)
+            r = self.post(hold, self.fields("hold@z.com", **bad))
+            self.assertIn("Please fill in your first name", r["body"], bad)
+            self.assertNotIn(QUEUE, S3.puts)
+        level_reset(lf)
+        self.post(hold, self.fields("hold@z.com", first_name="<b>Al\x00​x</b>" + "y" * 200, employer="E\r\nCo"))
+        it = self.q()["items"]["hold@z.com"]
+        self.assertEqual(len(it["first_name"]), 80)
+        self.assertTrue(it["first_name"].startswith("<b>Alx</b>"))
+        self.assertEqual(it["employer"], "E Co")
+        body = page(hold)
+        self.assertIn("Thanks, &lt;b&gt;Alx&lt;/b&gt;", body)
+        self.assertNotIn("<b>Alx</b>", body)
+
+    def test_honeypot_and_rate_limit(self):
+        hold = {"gg_id": gg_id("hold@z.com")}
+        r = self.post(hold, self.fields("hold@z.com", website="spam"))
+        self.assertEqual(r["statusCode"], 303)
+        self.assertNotIn(QUEUE, S3.puts)
+        for _ in range(6):
+            r = self.post(hold, self.fields("hold@z.com", accredited="unsure"))
+        self.assertIn("couldn&#x27;t save your details", r["body"])   # 5 per address per day
