@@ -27,7 +27,7 @@
 - Switch: `s3://full-pipeline-cache/deal-gate.json` `{"enabled": bool, "updated_at": iso}`, cached 60 s;
   missing/unreadable keeps the container's last value, else OFF. Switch OFF = non-admin output
   unchanged (golden files in `tests/fixtures/` were rendered by the pre-gate code; keep them passing).
-  Admin page + On/Off: trades `/?view=deal-gate`. Admin preview anywhere: `&gate_preview=anon|pending|blocked|cleared`.
+  Admin page + On/Off: trades `/?view=deal-gate`. Admin preview anywhere: `&gate_preview=anon|pending|blocked|cleared|confirm|confirmed`.
 - Viewer state from people-slim.json (`_people_slim_status_index`, never people.json), loaded only
   when the request carries gg_id / gg_view / gp. Investor Level `custom_label_3923758` (ids hardcoded):
   cleared ONLY Substantive 7162165, Accredited Investor 6950563, Qualified Client 7209227, Qualified Purchaser
@@ -41,8 +41,10 @@
   Self-Confirmed viewers (and gg_sc, which now only marks "just confirmed") see `DG_SC_THANKS_TEXT`.
   Previews: `&gate_preview=confirm` (button) and `confirmed` (thank-you).
 - Access queue `s3://full-pipeline-cache/deal-gate/queue.json` `{"items": {email: {email, person_id, reason,
-  first_at, last_at}}, "declined": {email: iso}}`: trades writes it (self-confirm; first gated grid load, switch ON,
-  of a signed-in viewer with no record or a Hold record = "signup"; declined emails only return by self-confirming).
+  first_at, last_at}}, "declined": {email: iso}}`: written via the shared `dg_queue_add` / `dg_queue_signup` by
+  trades (self-confirm; first gated grid load) AND CRMDealDetails (first gated deal-page load): switch ON, a
+  signed-in viewer with no record or a Hold record = "signup", once per email; never anonymous; declined emails
+  only return by self-confirming. Fail-soft, one log line, no address logged.
   daily-brief reads it and Approves (Substantive + approved.json) / Declines (Hold + declined).
 - Hard block (beats every Investor Level, cleared matches, personal links and self-confirm; viewer just sees
   the neutral "access is being reviewed" box): a people-slim record is hard-blocked (rec[5]) if any email is
@@ -51,14 +53,6 @@
   There is NO Source = RMS rule (removed; Chad handles RMS-sourced contacts manually).
   The gg_id email itself is checked against the email rules even with no record or an unreadable index.
   `dg_record_state` -> "hard"; `dg_combine`: any "hard" -> "blocked".
-- Self-confirm: viewers whose state is "pending" AND who match a Hold record (`dg_viewer_detail` -> hold pids)
-  get "I confirm I am an accredited investor" (+ investor qualification form link) instead of the neutral box;
-  unmatched emails, blocked and hard-blocked viewers never see it. The form POSTs to trades `/?view=self-confirm`
-  (Origin/Referer = DG_SITE, signed `scf1` form token bound to the Hold pid, honeypot, S3 limits 10/IP/hour,
-  3/person/day). Pipeline PUT Investor Level = "Self-Confirmed Accredited" (option id looked up by name, cached
-  24 h, added to DG_IL_LABELS; not found = fails safe), then a person note, warm-cache update (`dg_mark_cleared`),
-  one-line SES email to Chad, and a 303 back with cookie `gg_sc` (sig over `sc1|pid|exp`, 12 h) that turns
-  only that pid's "pending" into cleared until people-slim catches up. Self-Confirmed Accredited = cleared.
 - Personal links: env `VIEW_LINK_SECRET` (empty = links off). `?v=<pid>.<exp>.<sig>` (sig over
   `view1|pid|exp`, 183 d) -> 302 + cookie `gg_view` (sig over `viewc1|pid|exp`, 183 d; Max-Age 183 d).
   `dg_verify_token` also refuses any token whose remaining life exceeds its prefix's policy TTL (+300 s), so
@@ -68,6 +62,10 @@
   API Gateway "Trades" (HTTP proxy -> Function URL): the Lambda sees rawPath "/" and ?deal_id=, so
   CRMDealDetails passes `public_path="/deal/{id}"`, `drop=("deal_id",)` to dg_link_redirect / dg_current_path.
   Never rebuild a public URL from the event path in CRMDealDetails.
+- Anonymous gate box: "Offer terms are shown to investors we work with"; "Already a client? Enter your email for
+  a one-click link." + Send link; "New here? Create a login and we'll review your access." + Request access button
+  (`.gate-btn`, Cognito sign-up URL); after Send link: "If that address is on file, a link is on its way. Not a
+  client yet?" + the same button.
 - Gated output uses fixed placeholders in `<span class="gated">`; real values must not appear anywhere
   in the response. Request logs go through `dg_redacted_event` (no cookies, body, or link/key params; header values
   such as Referer pass through `dg_redact_url`, which blanks DG_STRIP_PARAMS values).

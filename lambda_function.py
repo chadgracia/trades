@@ -824,6 +824,8 @@ DG_CSS = """<style>
 .gate-form button{padding:8px 16px;font-size:14px;font-weight:600;border:none;border-radius:5px;
   background:var(--accent,#3a5a75);color:#fff;cursor:pointer}
 .gate-hp{position:absolute!important;left:-9999px!important;width:1px;height:1px;overflow:hidden}
+.gate-btn{display:inline-block;padding:8px 16px;font-size:14px;font-weight:600;border:none;border-radius:5px;
+  background:var(--accent,#3a5a75);color:#fff!important;text-decoration:none;cursor:pointer}
 </style>"""
 
 DG_JS = """<script>
@@ -837,7 +839,9 @@ function ggGateSubmit(f){
       headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b.toString()}).catch(function(){});
   }catch(e){}
   f.style.display='none';
-  var d=f.parentNode.querySelector('.gate-done'); if(d){d.hidden=false;}
+  var box=f.parentNode;
+  Array.prototype.forEach.call(box.querySelectorAll('.gate-l1,.gate-new'),function(x){x.hidden=true;});
+  var d=box.querySelector('.gate-done'); if(d){d.hidden=false;}
   return false;
 }
 </script>"""
@@ -872,14 +876,16 @@ def dg_gate_box(state, dest_url, confirm_token=None):
     return (DG_CSS + DG_JS
             + '<div class="gate-box">'
             '<h2>Offer terms are shown to investors we work with</h2>'
-            "<p>Already working with us? Enter your email and we'll send you a one-click link.</p>"
+            '<p class="gate-l1">Already a client? Enter your email for a one-click link.</p>'
             '<form class="gate-form" method="post" onsubmit="return ggGateSubmit(this)">'
             '<input type="email" name="email" required placeholder="Email" aria-label="Email">'
             '<input type="text" name="website" class="gate-hp" tabindex="-1" autocomplete="off" aria-hidden="true">'
             '<button type="submit">Send link</button>'
             '</form>'
-            '<p class="gate-done" hidden>If that address is on file, a link is on its way.</p>'
-            f'<p>New here? <a href="{signup}">Request access</a></p>'
+            '<div class="gate-done" hidden><p>If that address is on file, a link is on its way. Not a client yet?</p>'
+            f'<p><a class="gate-btn" href="{signup}">Request access</a></p></div>'
+            "<div class=\"gate-new\"><p>New here? Create a login and we'll review your access.</p>"
+            f'<p><a class="gate-btn" href="{signup}">Request access</a></p></div>'
             '</div>')
 
 

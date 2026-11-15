@@ -1045,3 +1045,21 @@ class Approved(unittest.TestCase):
         S3.objects[(B, APPROVED)] = json.dumps({"302": iso(1000.0)}).encode()
         self.assertEqual(lf.dg_approved(S3, now=1030.0), {})            # still cached
         self.assertIn("302", lf.dg_approved(S3, now=1061.0))
+
+
+class AnonBoxCopy(unittest.TestCase):
+    def test_new_wording_and_buttons(self):
+        level_reset(lf)
+        body = page({})
+        box = body.split('<div class="gate-box">', 1)[1]
+        self.assertIn("<h2>Offer terms are shown to investors we work with</h2>", box)
+        self.assertIn('<p class="gate-l1">Already a client? Enter your email for a one-click link.</p>', box)
+        self.assertIn('<button type="submit">Send link</button>', box)
+        self.assertIn("<div class=\"gate-new\"><p>New here? Create a login and we'll review your access.</p>", box)
+        self.assertIn('<div class="gate-done" hidden><p>If that address is on file, a link is on its way. '
+                      'Not a client yet?</p>', box)
+        self.assertEqual(box.count('<a class="gate-btn" href="https://us-east-1dsttcaqx7.auth.us-east-1.amazoncognito.com/signup?'), 2)
+        self.assertIn(".gate-btn{display:inline-block;padding:8px 16px;font-size:14px;font-weight:600;", body)
+        self.assertIn("querySelectorAll('.gate-l1,.gate-new')", body)
+        self.assertNotIn("Already working with us", body)
+        self.assertNotIn(TERM, body)
