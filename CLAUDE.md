@@ -39,8 +39,8 @@
 - A valid personal link (gg_view / gp) clears whatever the level, unless that record is hard-blocked or
   Non-Accredited. `s3://full-pipeline-cache/deal-gate/approved.json` `{pid: iso}` (written by daily-brief Approve):
   a pid approved in the last 3 h is cleared unless hard-blocked (cached 60 s, missing = {}).
-- Details form ("Request access to deal terms" / "Securities rules limit pricing to investors we've reviewed. Tell us
-  who you are and we'll reply within one business day.") replaces the confirm button: shown to a signed-in pending
+- Details form ("Request access to deal terms" / "Securities rules limit deal pricing to accredited investors. Tell us
+  who you are and we'll confirm your access within one business day.") replaces the confirm button: shown to a signed-in pending
   viewer with no CRM record or a blank / Unknown / Hold record (`dg_self_confirm_token` -> ("details", adf1 token
   bound to `dg_email_tag(email)`)). First / Last name (required), Country (`DG_COUNTRIES` select), Employer
   (optional), LinkedIn profile (optional; `dg_normalize_linkedin`: linkedin.com only -> https://www.linkedin.com/...,

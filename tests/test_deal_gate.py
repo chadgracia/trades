@@ -645,8 +645,8 @@ class SelfConfirmBox(unittest.TestCase):
             body = page({"gg_id": gg_id(email)})
             self.assertNotIn(TERM, body)
             self.assertIn("<h2>Request access to deal terms</h2>", body, email)
-            self.assertIn("<p>Securities rules limit pricing to investors we've reviewed. Tell us who you are and "
-                          "we'll reply within one business day.</p>", body.replace("&#x27;", "'"))
+            self.assertIn("<p>Securities rules limit deal pricing to accredited investors. Tell us who you are and "
+                          "we'll confirm your access within one business day.</p>", body.replace("&#x27;", "'"))
             self.assertIn('action="https://trades.graciagroup.com/?view=access-details"', body)
             for f in ('name="first_name" required', 'name="last_name" required', '<select name="country" required>',
                       'name="employer" maxlength="80"', 'value="yes" required> I am an accredited investor',
@@ -1252,8 +1252,8 @@ class AccessRequestWordingAndLinkedIn(AccessDetailsRoute):
     def test_form_wording_and_linkedin_field(self):
         body = page({"gg_id": gg_id("hold@z.com")}).replace("&#x27;", "'")
         self.assertIn("<h2>Request access to deal terms</h2>", body)
-        self.assertIn("<p>Securities rules limit pricing to investors we've reviewed. Tell us who you are and "
-                      "we'll reply within one business day.</p>", body)
+        self.assertIn("<p>Securities rules limit deal pricing to accredited investors. Tell us who you are and "
+                      "we'll confirm your access within one business day.</p>", body)
         self.assertIn('<label class="gate-wide">LinkedIn profile (optional)<input type="text" name="linkedin" '
                       'maxlength="200" placeholder="linkedin.com/in/yourname"', body)
         self.assertLess(body.index('name="employer"'), body.index('name="linkedin"'))

@@ -1039,8 +1039,8 @@ def dg_gate_box(state, dest_url, confirm_token=None):
         opts = "".join(f'<option value="{esc(c, quote=True)}">{esc(c)}</option>' for c in DG_COUNTRIES)
         return (DG_CSS + '<div class="gate-box">'
                 '<h2>Request access to deal terms</h2>'
-                "<p>Securities rules limit pricing to investors we've reviewed. "
-                "Tell us who you are and we'll reply within one business day.</p>"
+                "<p>Securities rules limit deal pricing to accredited investors. "
+                "Tell us who you are and we'll confirm your access within one business day.</p>"
                 f'<form class="gate-details" method="post" action="{esc(DG_SITE + DG_AD_ROUTE, quote=True)}">'
                 f'<input type="hidden" name="t" value="{esc(confirm_token[1] or "", quote=True)}">'
                 f'<input type="hidden" name="path" value="{esc(rel, quote=True)}">'
