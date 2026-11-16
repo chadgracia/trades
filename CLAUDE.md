@@ -48,7 +48,9 @@
   from (path) on the queue item (`dg_queue_details`; declined addresses not re-added). Pipeline (existing person
   only): first/last name only where blank or a placeholder (`dg_name_is_placeholder`); an accredited "yes" on a
   blank / Unknown / Hold record = Investor Level Self-Confirmed 7223459 + note, exactly like the confirm button.
-  Never creates people or companies. One email to Chad per address per 24 h (`deal-gate/requests/accessdetails/sent/`),
+  No snapshot match -> ONE live Pipeline lookup by exact email (`_dg_live_person_id`, 3 s timeout, read-only)
+  and a match is treated like a snapshot match; daily-brief later links / fills placeholder names once for items
+  still without person_id. Never creates people or companies. One email to Chad per address per 24 h (`deal-gate/requests/accessdetails/sent/`),
   Review link only when trades has BRIEF_PAGE_URL + BRIEF_PAGE_KEY. NEVER clears the gate. Afterwards the viewer
   sees "Thanks, <first>. We'll review your details and email you within one business day." (yes) or "...Please
   complete the Investor Qualification Form so we can review your access. We'll email you once it's reviewed." (unsure), from the queue item (cached 60 s) or the `gg_ad` cookie (answer only, 7 d).

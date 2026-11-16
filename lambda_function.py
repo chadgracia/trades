@@ -1601,6 +1601,35 @@ def _dg_ad_forbidden():
                                            'Cache-Control': 'private, no-store'}, 'body': 'Forbidden'}
 
 
+DG_AD_LIVE_TIMEOUT = 3          # seconds for the live Pipeline lookup by email
+
+
+def _dg_live_person_id(email, timeout=DG_AD_LIVE_TIMEOUT):
+    """One live Pipeline lookup by exact email (same approach as pipeline-agent's
+    signup check: query by email, then compare the returned address
+    case-insensitively). Person id str or None. Read-only, one request,
+    `timeout` seconds at most, never raises, never logs the address."""
+    want = (email or "").strip().lower()
+    if not want:
+        return None
+    try:
+        req = urllib.request.Request(
+            "https://api.pipelinecrm.com/api/v3/people.json?conditions[email]="
+            + urllib.parse.quote(want) + "&per_page=3",
+            headers={'Accept': 'application/json', **_pipeline_auth_headers()})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode() or '{}')
+        for p in (data.get('entries') or []) if isinstance(data, dict) else []:
+            if isinstance(p, dict) and p.get('id') is not None and want in {
+                    str(p.get(k) or '').strip().lower() for k in ('email', 'email2', 'home_email')}:
+                logger.info("deal-gate: access details live lookup matched")
+                return str(p['id'])
+        logger.info("deal-gate: access details live lookup found no person")
+    except Exception as e:
+        logger.warning(f"deal-gate: access details live lookup failed ({type(e).__name__})")
+    return None
+
+
 def _dg_ad_pipeline(pid, first, last, accredited, eligible, url, ts, ip):
     """Best-effort Pipeline writes for an existing person: first / last name ONLY
     where the current one is blank or a placeholder; Investor Level =
@@ -1618,6 +1647,9 @@ def _dg_ad_pipeline(pid, first, last, accredited, eligible, url, ts, ip):
         person['first_name'] = first
     if dg_name_is_placeholder(cur.get('last_name')):
         person['last_name'] = last
+    if eligible is None:        # live match: eligibility from the live record's level
+        cf = cur.get('custom_fields') if isinstance(cur.get('custom_fields'), dict) else {}
+        eligible = dg_level_confirmable(_cf_option_ids(cf.get(INVESTOR_LEVEL_FIELD)))
     level_set = accredited == 'yes' and eligible
     if level_set:
         person['custom_fields'] = {INVESTOR_LEVEL_FIELD: int(DG_IL_SELF)}
@@ -1659,7 +1691,9 @@ def _dg_ad_email(s3, ses, email, d, pid, now):
                  f"LinkedIn: {d.get('linkedin') or '(not given)'}",
                  "Accredited: " + ("Yes" if d['accredited'] == 'yes' else "Not sure"),
                  f"From: {DG_SITE}{d['from']}",
-                 "Pipeline: " + (f"https://app.pipelinecrm.com/people/{pid}" if pid else "not in Pipeline yet")]
+                 "Pipeline: " + (f"https://app.pipelinecrm.com/people/{pid}" if pid else
+                                 "not created yet. The record usually appears within a few minutes; "
+                                 "the daily brief queue will link it.")]
         base, bkey = os.environ.get('BRIEF_PAGE_URL', ''), os.environ.get('BRIEF_PAGE_KEY', '')
         if base and bkey:
             sep = '&' if '?' in base else '?'
@@ -1734,12 +1768,17 @@ def _dg_access_details(event, s3=None, ses=None, now=None):
     people = dg_people()
     pids = sorted((people[0].get(email.strip().lower()) or ())) if people else []
     pid = confirm[0] if confirm else (pids[0] if pids else None)
-    reason = 'self-confirmed' if (d['accredited'] == 'yes' and confirm) else 'signup'
+    live = False
+    if not pid and people is not None and not pids:
+        # Not in the hourly snapshot yet (e.g. created by the signup agent minutes ago).
+        pid = _dg_live_person_id(email)
+        live = bool(pid)
+    reason = 'self-confirmed' if (d['accredited'] == 'yes' and (confirm or live)) else 'signup'
     saved = dg_queue_details(email, pid, d, reason, s3, now)
     if saved != 'declined':
         url, ts = DG_SITE + path, stamp.strftime('%Y-%m-%d %H:%M:%S UTC')
         if pid and _dg_ad_pipeline(pid, d['first_name'], d['last_name'], d['accredited'],
-                                   pid in confirm, url, ts, ip):
+                                   None if live else (pid in confirm), url, ts, ip):
             dg_mark_level([pid], DG_IL_SELF)
         _dg_ad_email(s3, ses, email, d, pid, now)
     return _dg_sc_back(path, [dg_ad_cookie(email, d['accredited'], now)], event)

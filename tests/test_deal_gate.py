@@ -1192,7 +1192,8 @@ class AccessDetailsRoute(unittest.TestCase):
         self.assertEqual(self.calls, [])
         it = self.q()["items"]["newbie@z.com"]
         self.assertEqual((it["person_id"], it["first_name"]), (None, "Hal"))
-        self.assertIn("Pipeline: not in Pipeline yet", SES.sent[0]["Message"]["Body"]["Text"]["Data"])
+        self.assertIn("Pipeline: not created yet. The record usually appears within a few minutes; "
+                      "the daily brief queue will link it.", SES.sent[0]["Message"]["Body"]["Text"]["Data"])
 
     def test_one_email_per_24_hours(self):
         hold = {"gg_id": gg_id("hold@z.com")}
@@ -1295,3 +1296,89 @@ class AccessRequestWordingAndLinkedIn(AccessDetailsRoute):
         self.assertEqual(r["statusCode"], 303)
         self.assertEqual(self.q()["items"]["hold@z.com"]["linkedin"], "")
         self.assertIn("LinkedIn: (not given)", SES.sent[0]["Message"]["Body"]["Text"]["Data"])
+
+
+class LiveLookupOnSubmit(unittest.TestCase):
+    """Snapshot has no match: one live Pipeline lookup by exact email."""
+    def setUp(self):
+        level_reset(lf)
+        self.calls, self.urls = [], []
+        self.person = {"first_name": "", "last_name": "(unverified)",
+                       "custom_fields": {"custom_label_3923758": 7161646}}
+        p = mock.patch.object(lf, "_pipeline_auth_headers", lambda: {"Authorization": "Bearer test-jwt"})
+        p.start(); self.addCleanup(p.stop)
+
+    def api(self, method, path, payload=None):
+        self.calls.append((method, path, payload))
+        if method == "GET":
+            return {"person": dict(self.person)}
+        return {"id": 1}
+
+    def live(self, entries=None, exc=None):
+        test = self
+
+        def fake_urlopen(req, timeout=None):
+            test.urls.append((req.full_url, timeout))
+            if exc:
+                raise exc
+            return io.BytesIO(json.dumps({"entries": entries or []}).encode())
+        return fake_urlopen
+
+    def submit(self, urlopen, **kw):
+        f = {"t": AccessDetailsRoute.form_tok(self, "newbie@z.com"), "path": "/deal/9", "website": "",
+             "first_name": "Nia", "last_name": "New", "country": "Japan", "employer": "", "accredited": "yes"}
+        f.update(kw)
+        hdrs = {"content-type": "application/x-www-form-urlencoded", "origin": "https://trades.graciagroup.com"}
+        with mock.patch.object(lf, "_pd_api", self.api), \
+                mock.patch.object(lf.urllib.request, "urlopen", urlopen), \
+                mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            return lf.lambda_handler(event({"view": "access-details"}, {"gg_id": gg_id("newbie@z.com")},
+                                           method="POST", body=urllib.parse.urlencode(f), headers=hdrs), None)
+
+    def q(self):
+        return json.loads(S3.objects[(B, QUEUE)])["items"]["newbie@z.com"]
+
+    def test_live_match_names_written_link_in_email_person_id_saved(self):
+        r = self.submit(self.live([{"id": 999, "email": "other@z.com"}, {"id": 777, "email": "NewBie@Z.com "}]))
+        self.assertEqual(r["statusCode"], 303)
+        self.assertEqual(len(self.urls), 1)
+        url, timeout = self.urls[0]
+        self.assertIn("/people.json?conditions[email]=newbie%40z.com&per_page=3", url)
+        self.assertEqual(timeout, 3)
+        self.assertEqual(self.q()["person_id"], "777")
+        put = [c for c in self.calls if c[0] == "PUT"]
+        self.assertEqual(put, [("PUT", "/people/777.json", {"person": {
+            "first_name": "Nia", "last_name": "New", "custom_fields": {"custom_label_3923758": 7223459}}})])
+        self.assertIn("Pipeline: https://app.pipelinecrm.com/people/777", SES.sent[0]["Message"]["Body"]["Text"]["Data"])
+        self.assertEqual(self.q()["reason"], "self-confirmed")
+        self.assertNotIn("POST /people", " ".join(f"{m} {p}" for m, p, _ in self.calls))
+        self.assertFalse([c for c in self.calls if c[0] == "POST" and c[1].startswith("/people")])
+
+    def test_live_real_name_never_overwritten(self):
+        self.person = {"first_name": "Nadia", "last_name": "Newman", "custom_fields": {"custom_label_3923758": 6950563}}
+        self.submit(self.live([{"id": 777, "email": "newbie@z.com"}]))
+        self.assertEqual([c for c in self.calls if c[0] == "PUT"], [])     # real name, cleared level: nothing
+
+    def test_live_no_match_or_failure_still_succeeds(self):
+        for opener in (self.live([]), self.live([{"id": 5, "email": "newbie@z.com.evil"}]),
+                       self.live(exc=urllib.error.URLError("timed out")), self.live(exc=TimeoutError())):
+            level_reset(lf)
+            SES.sent.clear()
+            self.calls.clear()
+            r = self.submit(opener)
+            self.assertEqual(r["statusCode"], 303)
+            self.assertIsNone(self.q()["person_id"])
+            self.assertEqual(self.calls, [])                       # never creates or writes a person
+            self.assertIn("Pipeline: not created yet. The record usually appears within a few minutes; "
+                          "the daily brief queue will link it.", SES.sent[0]["Message"]["Body"]["Text"]["Data"])
+
+    def test_snapshot_match_skips_live_lookup(self):
+        f = {"t": AccessDetailsRoute.form_tok(self, "hold@z.com"), "path": "/", "website": "", "first_name": "Hal",
+             "last_name": "Hold", "country": "Canada", "employer": "", "accredited": "unsure"}
+        hdrs = {"content-type": "application/x-www-form-urlencoded", "origin": "https://trades.graciagroup.com"}
+        with mock.patch.object(lf, "_pd_api", self.api), \
+                mock.patch.object(lf.urllib.request, "urlopen", self.live([{"id": 1, "email": "hold@z.com"}])), \
+                mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
+            lf.lambda_handler(event({"view": "access-details"}, {"gg_id": gg_id("hold@z.com")}, method="POST",
+                                    body=urllib.parse.urlencode(f), headers=hdrs), None)
+        self.assertEqual(self.urls, [])
