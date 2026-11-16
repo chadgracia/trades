@@ -219,11 +219,12 @@ _people_slim_cache = {"etag": None, "checked_at": 0.0, "by_id": None, "by_email"
 
 
 def _person_emails(p):
-    """Lowercased emails on a person record: every top-level email* field
+    """Lowercased, trimmed emails on a person record: all three Pipeline slots
+    (email, email2, home_email) plus every other top-level email* field
     (string, list of strings, or list of {"email": ...} dicts)."""
     out = set()
     for k, v in p.items():
-        if not isinstance(k, str) or not k.lower().startswith("email"):
+        if not isinstance(k, str) or not (k.lower().startswith("email") or k.lower() == "home_email"):
             continue
         for item in (v if isinstance(v, list) else [v]):
             if isinstance(item, dict):
@@ -286,7 +287,7 @@ def _people_slim_status_index():
         by_id = {}
         by_email = {}
         dg_by_id = {}
-        field_counts = {"transactor": 0}
+        field_counts = {"transactor": 0, "extra_email": 0}
         for p in (data.get("people") or []) if isinstance(data, dict) else []:
             if not isinstance(p, dict) or p.get("id") is None:
                 continue
@@ -298,6 +299,8 @@ def _people_slim_status_index():
             dg_by_id[str(p["id"])] = _dg_person_slim(p, cf)
             if cf.get(DG_TRANSACTOR_FIELD) not in (None, "", []):
                 field_counts["transactor"] += 1
+            if any(isinstance(p.get(k), str) and "@" in p.get(k) for k in ("email2", "home_email")):
+                field_counts["extra_email"] += 1
             for em in _person_emails(p):
                 by_email.setdefault(em, set()).add(str(p["id"]))
         cache.update({"etag": etag or obj.get("ETag"), "checked_at": now, "by_id": by_id,
@@ -1832,6 +1835,7 @@ def _dg_admin_page(event, post=False, s3=None):
         fc = _people_slim_cache.get('dg_field_counts') or {}
         rows += [('Hard-blocked (Rainmaker/broker)', f"{hard:,}"),
                  ('Records with Transactor Type set', f"{fc.get('transactor', 0):,}"),
+                 ('People with a second or home email', f"{fc.get('extra_email', 0):,}"),
                  (f'Investor Level option "{DG_IL_SELF_LABEL}"',
                   str(sc_opt) if sc_opt else 'not found (self-confirm button fails safe)')]
         rows += [(f"Investor Level: {k}", f"{v:,}") for k, v in sorted(lvl_counts.items())]

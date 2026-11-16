@@ -28,6 +28,9 @@
   missing/unreadable keeps the container's last value, else OFF. Switch OFF = non-admin output
   unchanged (golden files in `tests/fixtures/` were rendered by the pre-gate code; keep them passing).
   Admin page + On/Off: trades `/?view=deal-gate`. Admin preview anywhere: `&gate_preview=anon|pending|blocked|cleared|confirm|confirmed`.
+- Emails: `_person_emails` (same helper in both repos) reads all three Pipeline slots: email, email2,
+  home_email (+ any other email* field), lowercased and trimmed. people-slim carries email2 / home_email once
+  syndicate-dash's rebuild_slim has rebuilt it (trades admin page row "People with a second or home email").
 - Viewer state from people-slim.json (`_people_slim_status_index`, never people.json), loaded only
   when the request carries gg_id / gg_view / gp. Investor Level `custom_label_3923758` (ids hardcoded):
   cleared ONLY Substantive 7162165, Accredited Investor 6950563, Qualified Client 7209227, Qualified Purchaser

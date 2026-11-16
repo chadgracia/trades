@@ -536,7 +536,7 @@ class HardBlock(unittest.TestCase):
         dg = lf._people_slim_cache["dg_by_id"]
         self.assertEqual(sorted(p for p, r in dg.items() if r[5]),
                          ["201", "202", "203", "204", "205", "206", "209"])
-        self.assertEqual(lf._people_slim_cache["dg_field_counts"], {"transactor": 5})
+        self.assertEqual(lf._people_slim_cache["dg_field_counts"], {"transactor": 5, "extra_email": 0})
 
     def test_source_rms_rule_removed(self):
         for em in ("src@y.com", "txt@y.com"):
@@ -1382,3 +1382,56 @@ class LiveLookupOnSubmit(unittest.TestCase):
             lf.lambda_handler(event({"view": "access-details"}, {"gg_id": gg_id("hold@z.com")}, method="POST",
                                     body=urllib.parse.urlencode(f), headers=hdrs), None)
         self.assertEqual(self.urls, [])
+
+
+# --- All three Pipeline email slots (email, email2, home_email) -------------
+SLOT_PEOPLE = [
+    {"id": 401, "first_name": "Sec", "email": "work@s.com", "email2": " Second@S.com ",
+     "custom_fields": {"custom_label_3923758": 7162165}},                       # Substantive, via email2
+    {"id": 402, "first_name": "Hom", "email": "w2@s.com", "home_email": "Home@Mail.com",
+     "custom_fields": {"custom_label_3923758": 6950563}},                       # Accredited, via home_email
+    {"id": 403, "first_name": "Hb", "email": "hb@s.com", "email2": "hb@rainmakersecurities.com",
+     "custom_fields": {"custom_label_3923758": 6950563}},                       # hard block via 2nd email
+    {"id": 404, "first_name": "Hp", "email": "hp@s.com", "home_email": "hpbroker@s.com",
+     "custom_fields": {"custom_label_3923758": 6950563, "custom_label_3759163": 6577160}},  # broker
+    {"id": 405, "first_name": "Pen", "email": "pen@s.com", "email2": "pen2@s.com",
+     "custom_fields": {"custom_label_3923758": 7161646}},                       # Hold, via email2
+]
+
+
+def slot_reset(mod, switch=True):
+    level_reset(mod, switch=switch)
+    S3.objects[(B, SLIM)] = json.dumps({"people": PEOPLE + HARD_PEOPLE + LEVEL_PEOPLE + SLOT_PEOPLE}).encode()
+
+
+class EmailSlots(unittest.TestCase):
+    def test_email2_and_home_email_clear_when_level_clears(self):
+        for em in ("second@s.com", "home@mail.com", "work@s.com"):
+            slot_reset(lf)
+            self.assertEqual(hard_state({"gg_id": gg_id(em)}), (False, "cleared"), em)
+            slot_reset(lf)
+            self.assertIn(TERM, page({"gg_id": gg_id(em)}))
+
+    def test_hard_block_via_second_email(self):
+        for em in ("hb@s.com", "hb@rainmakersecurities.com", "hpbroker@s.com", "hp@s.com"):
+            slot_reset(lf)
+            self.assertEqual(hard_state({"gg_id": gg_id(em)}), (True, "blocked"), em)
+        slot_reset(lf)
+        lf._people_slim_status_index()
+        self.assertTrue(lf._people_slim_cache["dg_by_id"]["403"][5])
+
+    def test_pending_via_email2_gets_form(self):
+        slot_reset(lf)
+        body = page({"gg_id": gg_id("pen2@s.com")})
+        self.assertIn("Request access to deal terms", body)
+        self.assertNotIn(TERM, body)
+
+    def test_admin_page_counts_second_or_home_email(self):
+        slot_reset(lf, switch=False)
+        body = run(lf, qp={"view": "deal-gate"}, cookies={"admin_key": ADMIN})["body"]
+        self.assertIn('People with a second or home email</th><td style="padding:4px 0">5<', body)
+
+    def test_copy_link_search_finds_second_email(self):
+        slot_reset(lf)
+        m = json.loads(run(lf, qp={"view": "view-link", "q": "home@mail"}, cookies={"admin_key": ADMIN})["body"])["matches"]
+        self.assertEqual([x["pid"] for x in m], ["402"])
