@@ -248,8 +248,8 @@ def _cf_option_ids(value):
 
 
 def _dg_person_slim(p, cf):
-    """(investor level ids, first name, full name, company, emails, hard_blocked)
-    for the deal gate."""
+    """(investor level ids, first name, full name, company, emails, hard_blocked,
+    partner_registered) for the deal gate."""
     first = (p.get("first_name") or "").strip() if isinstance(p.get("first_name"), str) else ""
     name = p.get("full_name") or p.get("name") or ""
     name = name.strip() if isinstance(name, str) else ""
@@ -263,7 +263,8 @@ def _dg_person_slim(p, cf):
     company = company.strip() if isinstance(company, str) else ""
     emails = tuple(sorted(_person_emails(p)))
     return (frozenset(_cf_option_ids(cf.get(INVESTOR_LEVEL_FIELD))), first, name, company,
-            emails, dg_person_hard_blocked(emails, cf))
+            emails, dg_person_hard_blocked(emails, cf),
+            DG_PD_REGISTERED in _cf_option_ids(cf.get(DG_PD_FIELD)))
 
 
 def _people_slim_status_index():
@@ -287,7 +288,7 @@ def _people_slim_status_index():
         by_id = {}
         by_email = {}
         dg_by_id = {}
-        field_counts = {"transactor": 0, "extra_email": 0}
+        field_counts = {"transactor": 0, "extra_email": 0, "partner_registered": 0}
         for p in (data.get("people") or []) if isinstance(data, dict) else []:
             if not isinstance(p, dict) or p.get("id") is None:
                 continue
@@ -301,6 +302,8 @@ def _people_slim_status_index():
                 field_counts["transactor"] += 1
             if any(isinstance(p.get(k), str) and "@" in p.get(k) for k in ("email2", "home_email")):
                 field_counts["extra_email"] += 1
+            if DG_PD_REGISTERED in _cf_option_ids(cf.get(DG_PD_FIELD)):
+                field_counts["partner_registered"] += 1
             for em in _person_emails(p):
                 by_email.setdefault(em, set()).add(str(p["id"]))
         cache.update({"etag": etag or obj.get("ETag"), "checked_at": now, "by_id": by_id,
@@ -331,7 +334,15 @@ DG_TOKEN_SKEW = 300             # clock slack when capping a token's remaining l
 DG_STATES = ("anon", "pending", "blocked", "cleared")
 # Admin-only extra previews: the confirm button, and the thank-you shown after it.
 DG_PREVIEW_EXTRA = {"confirm": "pending", "confirmed": "pending",
-                    "details-yes": "pending", "details-unsure": "pending"}
+                    "details-yes": "pending", "details-unsure": "pending",
+                    "details-intermediary": "pending", "broker": "blocked"}
+# Broker override: Partner Desk Response "Partner – Registered" (set by Chad only; the
+# Partner Desk reply form can never write it) clears a matched record and lifts the
+# hard block. No other Partner Desk Response value changes anything here.
+DG_PD_FIELD = "custom_label_4011837"
+DG_PD_REGISTERED = "7218528"
+DG_PD_URL = "https://trades.graciagroup.com/?view=partner-desk"
+DG_BROKER = ("broker",)
 DG_IL_LABELS = {"6950561": "Unknown", "7161646": "Hold: Screen for Substantive",
                 "6950562": "Non-Accredited", "7162165": "Substantive",
                 "7223459": "Self-Confirmed Accredited",
@@ -368,7 +379,7 @@ DG_AD_COOKIE_TTL = 7 * 86400
 DG_AD_MAX = 80
 DG_AD_LINKEDIN_MAX = 200
 _DG_LINKEDIN_RE = re.compile(r"^(?:https?://)?(?:www\.)?linkedin\.com(/[A-Za-z0-9\-._~%/]*)?/?$", re.I)
-DG_AD_ANSWERS = ("yes", "unsure")
+DG_AD_ANSWERS = ("yes", "unsure", "intermediary")
 DG_AD_PLACEHOLDER_NAMES = frozenset({"", ".", "..", "...", "-", "--", "_", "?", "x", "n/a", "na", "none",
                                      "null", "unknown", "(unknown)", "unverified", "(unverified)", "tbd",
                                      "first", "last", "name", "first name", "last name"})
@@ -694,19 +705,23 @@ def dg_person_hard_blocked(emails, cf):
 
 
 def dg_record_state(rec):
-    """Raw state of one dg_by_id record: 'hard' when hard-blocked, else its level
-    state; 'pending' for no record."""
+    """Raw state of one dg_by_id record: 'partner' for Partner – Registered (beats
+    everything), 'hard' when hard-blocked, else its level state; 'pending' for no record."""
     if not rec:
         return "pending"
+    if len(rec) > 6 and rec[6]:
+        return "partner"
     if len(rec) > 5 and rec[5]:
         return "hard"
     return dg_level_state(rec[0])
 
 
 def dg_combine(states):
-    """Several matched people: blocked if any is hard-blocked, else cleared if any,
-    else blocked if any, else pending."""
+    """Several matched people: cleared if any is Partner – Registered, else blocked if
+    any is hard-blocked, else cleared if any, else blocked if any, else pending."""
     states = list(states)
+    if "partner" in states:
+        return "cleared"
     if "hard" in states:
         return "blocked"
     if "cleared" in states:
@@ -717,12 +732,14 @@ def dg_combine(states):
 
 
 def _dg_email_raw(email, people):
-    """{pid: raw state} for an address ({None: 'hard'} for a hard-blocked address)."""
-    if dg_email_hard_blocked(email):
-        return {None: "hard"}
+    """{pid: raw state} for an address; a hard-blocked address adds {None: 'hard'}
+    unless a matched record is Partner – Registered."""
     by_email, dg_by_id, _ = people
     pids = by_email.get((email or "").strip().lower()) or ()
-    return {pid: dg_record_state(dg_by_id.get(pid)) for pid in pids}
+    out = {pid: dg_record_state(dg_by_id.get(pid)) for pid in pids}
+    if dg_email_hard_blocked(email) and "partner" not in out.values():
+        out[None] = "hard"
+    return out
 
 
 def dg_state_for_email(email, people):
@@ -730,7 +747,7 @@ def dg_state_for_email(email, people):
     if not states:
         return "pending", None
     st = dg_combine(states.values())
-    want = ("hard", "blocked") if st == "blocked" else (st,)
+    want = (("hard", "blocked") if st == "blocked" else ("cleared", "partner") if st == "cleared" else (st,))
     pick = sorted(p for p, s in states.items() if p is not None and s in want)
     return st, (pick[0] if pick else None)
 
@@ -753,9 +770,9 @@ def dg_viewer_detail(event, view_pid=None):
     view_pid = view_pid or dg_view_pid(event)
     if not email and not view_pid:
         return "anon", (), False
-    if email and dg_email_hard_blocked(email):
-        return "blocked", (), False
     people = dg_people()
+    if email and dg_email_hard_blocked(email) and people is None:
+        return "blocked", (), False
     if people is None:
         logger.warning("deal-gate: people index unreadable; identified viewer treated as cleared")
         return "cleared", (), False
@@ -781,6 +798,20 @@ def dg_viewer_detail(event, view_pid=None):
         if not thanked:
             confirm = tuple(sorted(p for p in pend if dg_level_confirmable(dg_by_id[p][0])))
     return state, confirm, thanked
+
+
+def dg_viewer_is_hard(event, view_pid=None):
+    """True when a blocked viewer is blocked by the hard block (Rainmaker / broker),
+    not by Non-Accredited: they get the Partner Desk box."""
+    email = _read_identity_email(event)
+    view_pid = view_pid or dg_view_pid(event)
+    people = dg_people()
+    if people is None:
+        return bool(email) and dg_email_hard_blocked(email)
+    raw = _dg_email_raw(email, people) if email else {}
+    if view_pid:
+        raw[str(view_pid)] = dg_record_state(people[1].get(str(view_pid)))
+    return "hard" in raw.values() and "partner" not in raw.values()
 
 
 def dg_viewer_state(event, view_pid=None):
@@ -822,7 +853,8 @@ def dg_name_is_placeholder(name):
 
 def dg_ad_cookie(email, answer, now=None):
     """Set-Cookie value for gg_ad (which answer this address gave), or None."""
-    tok = dg_make_token(("y" if answer == "yes" else "u") + dg_email_tag(email), "ad1", DG_AD_COOKIE_TTL, now)
+    tok = dg_make_token({"yes": "y", "intermediary": "i"}.get(answer, "u") + dg_email_tag(email),
+                        "ad1", DG_AD_COOKIE_TTL, now)
     if not tok:
         return None
     return (f"{DG_AD_COOKIE}={tok}; Max-Age={DG_AD_COOKIE_TTL}; Path=/; "
@@ -832,12 +864,12 @@ def dg_ad_cookie(email, answer, now=None):
 def dg_details_done(event, email):
     """(answer, first name) when this signed-in address has already sent the
     details form (queue item, else the gg_ad cookie with no name), else None."""
-    item = dg_queue_item(email)
-    if item and item.get("details_at") and item.get("accredited") in DG_AD_ANSWERS:
-        return item["accredited"], str(item.get("first_name") or "")
+    for item in (dg_queue_item(email), dg_queue_item(email, section="intermediaries")):
+        if item and item.get("details_at") and item.get("accredited") in DG_AD_ANSWERS:
+            return item["accredited"], str(item.get("first_name") or "")
     v = dg_verify_token(_get_cookie(event, DG_AD_COOKIE), "ad1")
-    if v and len(v) == 33 and v[1:] == dg_email_tag(email) and v[0] in "yu":
-        return ("yes" if v[0] == "y" else "unsure"), ""
+    if v and len(v) == 33 and v[1:] == dg_email_tag(email) and v[0] in "yui":
+        return {"y": "yes", "i": "intermediary", "u": "unsure"}[v[0]], ""
     return None
 
 
@@ -848,6 +880,8 @@ def dg_self_confirm_token(event, view_pid=None, now=None):
     signed-in viewer with no CRM record or a blank / Unknown / Hold record;
     else None (the neutral box)."""
     state, confirm, thanked = dg_viewer_detail(event, view_pid)
+    if state == "blocked":
+        return DG_BROKER if dg_viewer_is_hard(event, view_pid) else None
     if state != "pending":
         return None
     email = _read_identity_email(event)
@@ -874,7 +908,9 @@ def dg_box_token(event, preview, qp, view_pid=None):
     if preview:
         return {"confirm": ("details", ""), "confirmed": DG_SC_THANKS,
                 "details-yes": ("done", "yes", ""),
-                "details-unsure": ("done", "unsure", "")}.get((qp or {}).get("gate_preview"))
+                "details-unsure": ("done", "unsure", ""),
+                "details-intermediary": ("done", "intermediary", ""),
+                "broker": DG_BROKER}.get((qp or {}).get("gate_preview"))
     return dg_self_confirm_token(event, view_pid)
 
 
@@ -983,6 +1019,10 @@ def dg_gate_box(state, dest_url, confirm_token=None):
         answer, first = confirm_token[1], confirm_token[2]
         hi = f"Thanks, {esc(first)}." if first else "Thanks."
         iqf = esc(DG_IQF_URL, quote=True)
+        if answer == "intermediary":
+            return (DG_CSS + '<div class="gate-box">'
+                    f"<p>{hi} Brokers, advisers and finders see deal terms through our Partner Desk.</p>"
+                    f'<p><a class="gate-btn" href="{esc(DG_PD_URL, quote=True)}">Open the Partner Desk</a></p></div>')
         if answer == "yes":
             return (DG_CSS + '<div class="gate-box">'
                     f"<p>{hi} We'll review your details and email you within one business day.</p>"
@@ -1012,7 +1052,9 @@ def dg_gate_box(state, dest_url, confirm_token=None):
                 f'<label class="gate-wide">LinkedIn profile (optional)<input type="text" name="linkedin" '
                 f'maxlength="{DG_AD_LINKEDIN_MAX}" placeholder="linkedin.com/in/yourname" autocomplete="url"></label>'
                 '<fieldset><label><input type="radio" name="accredited" value="yes" required> I am an accredited investor</label>'
-                "<label><input type=\"radio\" name=\"accredited\" value=\"unsure\"> I'm not sure</label></fieldset>"
+                "<label><input type=\"radio\" name=\"accredited\" value=\"unsure\"> I'm not sure</label>"
+                "<label><input type=\"radio\" name=\"accredited\" value=\"intermediary\"> "
+                "I represent clients (broker, adviser or finder)</label></fieldset>"
                 '<button type="submit">Submit</button>'
                 '</form></div>')
     if state == "pending" and confirm_token == DG_SC_THANKS:
@@ -1030,6 +1072,11 @@ def dg_gate_box(state, dest_url, confirm_token=None):
                 '<button type="submit">I confirm I am an accredited investor</button>'
                 '</form>'
                 f'<p>Not sure? <a href="{esc(DG_IQF_URL, quote=True)}">Complete the investor qualification form</a></p>'
+                '</div>')
+    if state == "blocked" and confirm_token == DG_BROKER:
+        return (DG_CSS + '<div class="gate-box"><h2>Brokers and advisers</h2>'
+                '<p>Brokers, advisers and finders see deal terms through our Partner Desk.</p>'
+                f'<p><a class="gate-btn" href="{html_mod.escape(DG_PD_URL, quote=True)}">Open the Partner Desk</a></p>'
                 '</div>')
     if state in ("pending", "blocked"):
         return (DG_CSS + '<div class="gate-box"><p>Thanks for registering. Your access is being '
@@ -1140,10 +1187,11 @@ def dg_queue_add(email, pid, reason, s3=None, now=None):
                         "reason": reason, "first_at": prev.get("first_at") or iso, "last_at": iso}
         if reason == "self-confirmed":
             declined.pop(email, None)
+        out = dict(data, items=items, declined=declined)
         s3.put_object(Bucket=DG_BUCKET, Key=DG_QUEUE_KEY, ContentType="application/json",
-                      Body=json.dumps({"items": items, "declined": declined}).encode())
+                      Body=json.dumps(out).encode())
         _dg_queue_seen.add(email)
-        _dg_queue_cache.update({"data": {"items": items, "declined": declined}, "checked_at": now})
+        _dg_queue_cache.update({"data": _dg_queue_sections(out), "checked_at": now})
         logger.info(f"deal-gate: access queue updated ({reason})")
         return True
     except Exception as e:
@@ -1167,25 +1215,33 @@ def dg_queue_read(s3=None, now=None):
             if "NoSuchKey" not in type(e).__name__ and "NoSuchKey" not in str(e):
                 raise
             data = {}
-        data = data if isinstance(data, dict) else {}
-        c["data"] = {"items": data.get("items") if isinstance(data.get("items"), dict) else {},
-                     "declined": data.get("declined") if isinstance(data.get("declined"), dict) else {}}
+        c["data"] = _dg_queue_sections(data)
     except Exception as e:
         logger.info(f"deal-gate: access queue unreadable ({type(e).__name__})")
         c["data"] = None
     return c["data"]
 
 
-def dg_queue_item(email, s3=None, now=None):
-    """This address's queue item (dict) or None."""
+def _dg_queue_sections(data):
+    """The queue file's sections: investor 'items', 'declined' and 'intermediaries'
+    (broker / adviser / finder answers, never part of the investor queue)."""
+    data = data if isinstance(data, dict) else {}
+    return {k: (data.get(k) if isinstance(data.get(k), dict) else {})
+            for k in ("items", "declined", "intermediaries")}
+
+
+def dg_queue_item(email, s3=None, now=None, section="items"):
+    """This address's queue item (dict) in `section`, or None."""
     q = dg_queue_read(s3, now)
-    item = (q or {}).get("items", {}).get((email or "").strip().lower()) if q else None
+    item = (q or {}).get(section, {}).get((email or "").strip().lower()) if q else None
     return item if isinstance(item, dict) else None
 
 
-def dg_queue_details(email, pid, details, reason="signup", s3=None, now=None):
+def dg_queue_details(email, pid, details, reason="signup", s3=None, now=None, section="items"):
     """Save details-form answers on this address's queue item (read-modify-write).
-    Adds the item when missing, unless the address is declined. Returns 'saved',
+    Adds the item when missing, unless the address is declined. section
+    'intermediaries' (broker / adviser / finder answer) saves there instead, removes
+    any investor item for the address and never touches 'declined'. Returns 'saved',
     'declined' or 'failed' (one log line, never the address). Never raises."""
     email = (email or "").strip().lower()
     if not email:
@@ -1202,8 +1258,24 @@ def dg_queue_details(email, pid, details, reason="signup", s3=None, now=None):
             data = {}
         if not isinstance(data, dict):
             data = {}
-        items = data.get("items") if isinstance(data.get("items"), dict) else {}
-        declined = data.get("declined") if isinstance(data.get("declined"), dict) else {}
+        sec = _dg_queue_sections(data)
+        items, declined = sec["items"], sec["declined"]
+        if section == "intermediaries":
+            inter = sec["intermediaries"]
+            prev = inter.get(email) if isinstance(inter.get(email), dict) else {}
+            item = dict(prev)
+            item.update(details or {})
+            item.update({"email": email, "person_id": (str(pid) if pid else prev.get("person_id")),
+                         "reason": "intermediary", "first_at": prev.get("first_at") or iso, "last_at": iso})
+            inter[email] = item
+            items.pop(email, None)
+            out = dict(data, items=items, declined=declined, intermediaries=inter)
+            s3.put_object(Bucket=DG_BUCKET, Key=DG_QUEUE_KEY, ContentType="application/json",
+                          Body=json.dumps(out).encode())
+            _dg_queue_seen.add(email)
+            _dg_queue_cache.update({"data": _dg_queue_sections(out), "checked_at": now})
+            logger.info("deal-gate: intermediary details saved")
+            return "saved"
         prev = items.get(email) if isinstance(items.get(email), dict) else None
         if prev is None and email in declined:
             logger.info("deal-gate: details not queued (declined)")
@@ -1215,10 +1287,11 @@ def dg_queue_details(email, pid, details, reason="signup", s3=None, now=None):
                      "reason": prev.get("reason") if (prev.get("reason") and reason == "signup") else reason,
                      "first_at": prev.get("first_at") or iso, "last_at": iso})
         items[email] = item
+        out = dict(data, items=items, declined=declined)
         s3.put_object(Bucket=DG_BUCKET, Key=DG_QUEUE_KEY, ContentType="application/json",
-                      Body=json.dumps({"items": items, "declined": declined}).encode())
+                      Body=json.dumps(out).encode())
         _dg_queue_seen.add(email)
-        _dg_queue_cache.update({"data": {"items": items, "declined": declined}, "checked_at": now})
+        _dg_queue_cache.update({"data": _dg_queue_sections(out), "checked_at": now})
         logger.info("deal-gate: access details saved")
         return "saved"
     except Exception as e:
@@ -1692,7 +1765,8 @@ def _dg_ad_email(s3, ses, email, d, pid, now):
         lines = [f"Name: {d['first_name']} {d['last_name']}", f"Email: {email}",
                  f"Country: {d['country']}", f"Employer: {d['employer'] or '(not given)'}",
                  f"LinkedIn: {d.get('linkedin') or '(not given)'}",
-                 "Accredited: " + ("Yes" if d['accredited'] == 'yes' else "Not sure"),
+                 "Accredited: " + {"yes": "Yes", "intermediary": "Represents clients (broker, adviser or finder)"
+                                   }.get(d['accredited'], "Not sure"),
                  f"From: {DG_SITE}{d['from']}",
                  "Pipeline: " + (f"https://app.pipelinecrm.com/people/{pid}" if pid else
                                  "not created yet. The record usually appears within a few minutes; "
@@ -1703,7 +1777,9 @@ def _dg_ad_email(s3, ses, email, d, pid, now):
             lines.append(f"Review: {base}{sep}key={urllib.parse.quote(bkey, safe='')}#access-queue")
         (ses or boto3.client('ses', region_name='us-east-1')).send_email(
             Source=DG_EMAIL_FROM, Destination={'ToAddresses': [DG_EMAIL_REPLY_TO]},
-            Message={'Subject': {'Data': f"Access request: {d['first_name']} {d['last_name']}", 'Charset': 'UTF-8'},
+            Message={'Subject': {'Data': ("Access request (intermediary): " if d['accredited'] == 'intermediary'
+                                          else "Access request: ") + f"{d['first_name']} {d['last_name']}",
+                                 'Charset': 'UTF-8'},
                      'Body': {'Text': {'Data': "\n".join(lines) + "\n", 'Charset': 'UTF-8'}}})
         s3.put_object(Bucket=DG_BUCKET, Key=key, ContentType='application/json',
                       Body=json.dumps({'sent_at': now}).encode())
@@ -1765,7 +1841,7 @@ def _dg_access_details(event, s3=None, ses=None, now=None):
     if (not d['first_name'] or not d['last_name'] or d['country'] not in DG_COUNTRIES
             or d['accredited'] not in DG_AD_ANSWERS):
         return _dg_ad_failed(path, "Please fill in your first name, last name and country, "
-                                   "and choose one of the two options.")
+                                   "and choose one of the options.")
     d['details_at'] = stamp.isoformat(timespec='seconds')
     d['from'] = path
     people = dg_people()
@@ -1776,8 +1852,12 @@ def _dg_access_details(event, s3=None, ses=None, now=None):
         # Not in the hourly snapshot yet (e.g. created by the signup agent minutes ago).
         pid = _dg_live_person_id(email)
         live = bool(pid)
-    reason = 'self-confirmed' if (d['accredited'] == 'yes' and (confirm or live)) else 'signup'
-    saved = dg_queue_details(email, pid, d, reason, s3, now)
+    if d['accredited'] == 'intermediary':
+        # Broker / adviser / finder: never the investor queue, never an Investor Level.
+        saved = dg_queue_details(email, pid, d, 'intermediary', s3, now, section='intermediaries')
+    else:
+        reason = 'self-confirmed' if (d['accredited'] == 'yes' and (confirm or live)) else 'signup'
+        saved = dg_queue_details(email, pid, d, reason, s3, now)
     if saved != 'declined':
         url, ts = DG_SITE + path, stamp.strftime('%Y-%m-%d %H:%M:%S UTC')
         if pid and _dg_ad_pipeline(pid, d['first_name'], d['last_name'], d['accredited'],
@@ -1836,6 +1916,7 @@ def _dg_admin_page(event, post=False, s3=None):
         rows += [('Hard-blocked (Rainmaker/broker)', f"{hard:,}"),
                  ('Records with Transactor Type set', f"{fc.get('transactor', 0):,}"),
                  ('People with a second or home email', f"{fc.get('extra_email', 0):,}"),
+                 ('Broker access (Partner – Registered)', f"{fc.get('partner_registered', 0):,}"),
                  (f'Investor Level option "{DG_IL_SELF_LABEL}"',
                   str(sc_opt) if sc_opt else 'not found (self-confirm button fails safe)')]
         rows += [(f"Investor Level: {k}", f"{v:,}") for k, v in sorted(lvl_counts.items())]
@@ -4546,7 +4627,7 @@ def lambda_handler(event, context):
     deal_switcher_html = _render_deal_switcher_modal(_is_admin)
     _dg_hide = ' style="display:none"' if dg_gated else ''
     _dg_sc_tok = None
-    if dg_gated and dg_state == 'pending':
+    if dg_gated and dg_state in ('pending', 'blocked'):
         _dg_sc_tok = dg_box_token(event, dg_preview, query_params)
     _dg_box_html = dg_gate_box(dg_state, DG_SITE + dg_current_path(event, '/'), _dg_sc_tok) if dg_gated else ''
     _dg_admin_html = DG_ADMIN_BOX if _is_admin else ''

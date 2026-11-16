@@ -73,6 +73,17 @@
   There is NO Source = RMS rule (removed; Chad handles RMS-sourced contacts manually).
   The gg_id email itself is checked against the email rules even with no record or an unreadable index.
   `dg_record_state` -> "hard"; `dg_combine`: any "hard" -> "blocked".
+- Broker override: Partner Desk Response `custom_label_4011837` = Partner – Registered 7218528 (set by Chad only;
+  PD_WRITABLE / PD_OPTION_MAP can never write it) on a matched record = "partner" state: cleared whatever the level,
+  lifts the hard block (email rules and broker Transactor Types), personal links too (record field rec[6]). No other
+  Partner Desk Response value changes anything. Admin row "Broker access (Partner – Registered)".
+- Hard-blocked viewers (not Non-Accredited) see the Partner Desk box: "Brokers and advisers" / "Brokers, advisers and
+  finders see deal terms through our Partner Desk." + "Open the Partner Desk" (DG_PD_URL); preview `&gate_preview=broker`.
+  Non-Accredited keeps the neutral message.
+- Access form third answer "I represent clients (broker, adviser or finder)" (accredited = "intermediary"): saved in
+  queue.json section "intermediaries" (never the investor "items"; any investor item for the address is removed, never
+  "declined"), no Investor Level, email subject "Access request (intermediary): <first> <last>", thank-you with the
+  Partner Desk button. Every queue writer (trades, daily-brief) keeps the other sections of queue.json.
 - Personal links: env `VIEW_LINK_SECRET` (empty = links off). `?v=<pid>.<exp>.<sig>` (sig over
   `view1|pid|exp`, 183 d) -> 302 + cookie `gg_view` (sig over `viewc1|pid|exp`, 183 d; Max-Age 183 d).
   `dg_verify_token` also refuses any token whose remaining life exceeds its prefix's policy TTL (+300 s), so

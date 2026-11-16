@@ -536,7 +536,7 @@ class HardBlock(unittest.TestCase):
         dg = lf._people_slim_cache["dg_by_id"]
         self.assertEqual(sorted(p for p, r in dg.items() if r[5]),
                          ["201", "202", "203", "204", "205", "206", "209"])
-        self.assertEqual(lf._people_slim_cache["dg_field_counts"], {"transactor": 5, "extra_email": 0})
+        self.assertEqual(lf._people_slim_cache["dg_field_counts"], {"transactor": 5, "extra_email": 0, "partner_registered": 0})
 
     def test_source_rms_rule_removed(self):
         for em in ("src@y.com", "txt@y.com"):
@@ -576,7 +576,8 @@ class HardBlock(unittest.TestCase):
         hard_reset(lf)
         body = run(lf, cookies={cookie[0]: cookie[1]})["body"]
         self.assertNotIn(TERM, body)
-        self.assertIn("Your access is being reviewed", body)
+        self.assertIn("<h2>Brokers and advisers</h2>", body)
+        self.assertNotIn("Your access is being reviewed", body)
         for s in ("Rainmaker/broker", "Hard-blocked", "I confirm I am an accredited investor", 'name="t"'):
             self.assertNotIn(s, body)
 
@@ -1435,3 +1436,127 @@ class EmailSlots(unittest.TestCase):
         slot_reset(lf)
         m = json.loads(run(lf, qp={"view": "view-link", "q": "home@mail"}, cookies={"admin_key": ADMIN})["body"])["matches"]
         self.assertEqual([x["pid"] for x in m], ["402"])
+
+
+# --- Broker override (Partner – Registered), broker box, intermediary answer ----
+PD_PEOPLE = [
+    {"id": 601, "first_name": "Bro", "email": "bro@k.com",                        # broker + Partner – Registered
+     "custom_fields": {"custom_label_3759163": 6577160, "custom_label_4011837": 7218528}},
+    {"id": 602, "first_name": "Bru", "email": "bru@k.com",                        # broker, no override
+     "custom_fields": {"custom_label_3759163": 6888332, "custom_label_4011837": 7218527}},
+    {"id": 603, "first_name": "Ram", "email": "ram@rainmakersecurities.com",       # Rainmaker + registered
+     "custom_fields": {"custom_label_4011837": [7218528]}},
+    {"id": 604, "first_name": "Rev", "email": "rev@k.com",                        # broker, Revoked
+     "custom_fields": {"custom_label_3759163": 6888333, "custom_label_4011837": 7218529}},
+    {"id": 605, "first_name": "Ref", "email": "ref@k.com",                        # Referral – Client, Hold
+     "custom_fields": {"custom_label_3923758": 7161646, "custom_label_4011837": 7218570}},
+    {"id": 606, "first_name": "Inv", "email": "inv@k.com",                        # Partner – Interested, blank level
+     "custom_fields": {"custom_label_4011837": 7218527}},
+]
+BROKER_BOX = "<h2>Brokers and advisers</h2>"
+PD_LINE = "Brokers, advisers and finders see deal terms through our Partner Desk."
+PD_BTN = '<a class="gate-btn" href="https://trades.graciagroup.com/?view=partner-desk">Open the Partner Desk</a>'
+
+
+def pd_reset(mod, switch=True):
+    level_reset(mod, switch=switch)
+    S3.objects[(B, SLIM)] = json.dumps({"people": PEOPLE + HARD_PEOPLE + LEVEL_PEOPLE + PD_PEOPLE}).encode()
+
+
+class BrokerOverride(unittest.TestCase):
+    def test_partner_registered_broker_cleared(self):
+        for em in ("bro@k.com", "ram@rainmakersecurities.com"):
+            pd_reset(lf)
+            self.assertEqual(hard_state({"gg_id": gg_id(em)}), (False, "cleared"), em)
+            pd_reset(lf)
+            body = page({"gg_id": gg_id(em)})
+            self.assertIn(TERM, body, em)
+            self.assertNotIn(BROKER_BOX, body)
+
+    def test_partner_registered_personal_link_cleared(self):
+        pd_reset(lf)
+        self.assertEqual(hard_state({"gg_view": view_tok("601", "viewc1", int(time.time()) + 3600)}), (False, "cleared"))
+
+    def test_broker_without_override_sees_partner_desk_box(self):
+        for em in ("bru@k.com", "rev@k.com", "cob@y.com", "rob@rainmakersecurities.com"):
+            pd_reset(lf)
+            self.assertEqual(hard_state({"gg_id": gg_id(em)}), (True, "blocked"), em)
+            pd_reset(lf)
+            body = page({"gg_id": gg_id(em)})
+            self.assertNotIn(TERM, body)
+            box = body.split('<div class="gate-box">', 1)[1].split("</div>", 1)[0]
+            self.assertIn(BROKER_BOX, box, em)
+            self.assertIn(PD_LINE, box)
+            self.assertIn(PD_BTN, box)
+            for leak in ("CRM", "Pipeline", "Investor Level", "Transactor", "Rainmaker", "registered"):
+                self.assertNotIn(leak, box)
+
+    def test_other_partner_desk_values_change_nothing(self):
+        pd_reset(lf)
+        self.assertEqual(hard_state({"gg_id": gg_id("ref@k.com")}), (True, "pending"))   # Referral – Client: level rules
+        pd_reset(lf)
+        self.assertEqual(hard_state({"gg_id": gg_id("inv@k.com")}), (True, "pending"))   # Partner – Interested
+        pd_reset(lf)
+        self.assertEqual(hard_state({"gg_id": gg_id("rev@k.com")}), (True, "blocked"))   # Revoked broker
+
+    def test_non_accredited_keeps_neutral_message(self):
+        pd_reset(lf)
+        body = page({"gg_id": gg_id("nonacc@z.com")})
+        self.assertIn("Thanks for registering. Your access is being reviewed", body)
+        self.assertNotIn(BROKER_BOX, body)
+        self.assertNotIn("partner-desk", body)
+
+    def test_reply_form_can_never_write_partner_registered(self):
+        self.assertNotIn(7218528, lf.PD_WRITABLE)
+        self.assertNotIn(7218528, lf.PD_OPTION_MAP.values())
+        self.assertEqual(lf.PD_WRITABLE, {None, 7218524, 7218525, 7218527})
+
+    def test_admin_row_and_previews(self):
+        pd_reset(lf, switch=False)
+        body = run(lf, qp={"view": "deal-gate"}, cookies={"admin_key": ADMIN})["body"]
+        self.assertIn('Broker access (Partner – Registered)</th><td style="padding:4px 0">2<', body)
+        pd_reset(lf)
+        self.assertIn(BROKER_BOX, page({"admin_key": ADMIN}, qp={"gate_preview": "broker"}))
+        pd_reset(lf)
+        self.assertNotIn(BROKER_BOX, page({"admin_key": ADMIN}, qp={"gate_preview": "blocked"}))
+
+
+class IntermediaryAnswer(AccessDetailsRoute):
+    def test_option_on_form(self):
+        body = page({"gg_id": gg_id("hold@z.com")})
+        self.assertIn('value="intermediary"> I represent clients (broker, adviser or finder)</label>', body)
+
+    def test_saves_emails_not_queued_and_partner_desk_thank_you(self):
+        hold = {"gg_id": gg_id("hold@z.com")}
+        S3.objects[(B, QUEUE)] = json.dumps({"items": {"hold@z.com": {"email": "hold@z.com", "reason": "signup"}},
+                                             "declined": {}}).encode()
+        r = self.post(hold, self.fields("hold@z.com", accredited="intermediary"))
+        self.assertEqual(r["statusCode"], 303)
+        q = json.loads(S3.objects[(B, QUEUE)])
+        self.assertNotIn("hold@z.com", q["items"])                     # removed from the investor queue
+        self.assertEqual(q["declined"], {})                            # not declined
+        it = q["intermediaries"]["hold@z.com"]
+        self.assertEqual((it["accredited"], it["first_name"], it["country"], it["reason"]),
+                         ("intermediary", "Hal", "Canada", "intermediary"))
+        puts = [c for c in self.calls if c[0] == "PUT"]
+        self.assertTrue(all("custom_fields" not in c[2]["person"] for c in puts))   # no Investor Level
+        self.assertFalse(any(c[1] == "/notes.json" for c in self.calls))
+        self.assertEqual(SES.sent[0]["Message"]["Subject"]["Data"], "Access request (intermediary): Hal Hold")
+        self.assertIn("Accredited: Represents clients (broker, adviser or finder)",
+                      SES.sent[0]["Message"]["Body"]["Text"]["Data"])
+        body = page(hold)
+        self.assertNotIn(TERM, body)
+        self.assertIn("Thanks, Hal. " + PD_LINE, body)
+        self.assertIn(PD_BTN, body)
+        self.assertNotIn("Request access to deal terms", body)
+        cookie = r["cookies"][0].split(";")[0].split("=", 1)
+        level_reset(lf)                                                # cold container: cookie only
+        self.assertIn(PD_LINE, page(dict(hold, **{cookie[0]: cookie[1]})))
+
+    def test_investor_writes_keep_intermediaries(self):
+        S3.objects[(B, QUEUE)] = json.dumps({"items": {}, "declined": {},
+                                             "intermediaries": {"x@z.com": {"email": "x@z.com"}}}).encode()
+        self.post({"gg_id": gg_id("hold@z.com")}, self.fields("hold@z.com"))
+        self.assertIn("x@z.com", json.loads(S3.objects[(B, QUEUE)])["intermediaries"])
+        self.assertTrue(lf.dg_queue_add("new@z.com", None, "signup", S3))
+        self.assertIn("x@z.com", json.loads(S3.objects[(B, QUEUE)])["intermediaries"])
