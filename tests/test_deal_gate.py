@@ -1560,3 +1560,148 @@ class IntermediaryAnswer(AccessDetailsRoute):
         self.assertIn("x@z.com", json.loads(S3.objects[(B, QUEUE)])["intermediaries"])
         self.assertTrue(lf.dg_queue_add("new@z.com", None, "signup", S3))
         self.assertIn("x@z.com", json.loads(S3.objects[(B, QUEUE)])["intermediaries"])
+
+
+# --- Domain auto-approval on the access form -----------------------------------
+VC, SUBST, SELFC, HOLD = 6484808, 7162165, 7223459, 7161646
+NATURAL, COBROKER = 6484810, 6577160
+SRC_RULE = ("custom_label_7777001", frozenset({"7777002"}))   # fake Source field / RMS option
+
+
+def auto_people(req_email, voucher_email, v_level=SUBST, v_type=VC, req_extra=None):
+    req = {"id": 401, "first_name": "Rex", "last_name": "Req", "email": req_email,
+           "custom_fields": dict({"custom_label_3923758": HOLD}, **(req_extra or {}))}
+    vouch = {"id": 402, "first_name": "Val", "last_name": "Vouch", "email": voucher_email,
+             "custom_fields": {"custom_label_3923758": v_level, "custom_label_3759163": v_type}}
+    return [req, vouch]
+
+
+class AutoApproveDomain(AccessDetailsRoute):
+    BRIEF_ENV = {"BRIEF_PAGE_URL": "https://brief.example/", "BRIEF_PAGE_KEY": "test-brief-key"}
+
+    def setUp(self):
+        super().setUp()
+        self.brief_calls = []
+        self.brief_reply = {"ok": True, "emailed": True, "saved": True}
+
+    def brief(self, base, bkey, form):
+        self.brief_calls.append(form)
+        return self.brief_reply
+
+    def submit(self, req_email, people, live=None):
+        level_reset(lf)
+        S3.objects[(B, SLIM)] = json.dumps({"people": PEOPLE + people}).encode()
+        self.person = dict({"first_name": "Rex", "last_name": "Req", "custom_fields": {"custom_label_3923758": HOLD}},
+                           **(live or {}))
+        with mock.patch.dict(os.environ, self.BRIEF_ENV), \
+                mock.patch.object(lf, "_dg_auto_brief_post", self.brief), \
+                mock.patch.object(lf, "_dg_auto_source_rule", lambda: SRC_RULE):
+            return self.post({"gg_id": gg_id(req_email)}, self.fields(req_email))
+
+    def assert_queued(self, req_email):
+        self.assertIn(req_email, self.q()["items"])
+        subj = [m["Message"]["Subject"]["Data"] for m in SES.sent]
+        self.assertEqual(subj, ["Access request: Hal Hold"])
+        self.assertTrue(any(c[0] == "PUT" and (c[2]["person"].get("custom_fields") or {}).get(
+            "custom_label_3923758") == 7223459 for c in self.calls))       # Self-Confirmed as today
+
+    def test_corporate_domain_vc_fund_substantive_clears(self):
+        r = self.submit("rex@acme.vc", auto_people("rex@acme.vc", "val@acme.vc"))
+        self.assertEqual(r["statusCode"], 303)
+        self.assertEqual(len(self.brief_calls), 1)
+        f = self.brief_calls[0]
+        self.assertEqual((f["act"], f["email"], f["person_id"], f["domain"], f["voucher_id"], f["voucher_name"],
+                          f["voucher_level"]), ("auto_approve", "rex@acme.vc", "401", "acme.vc", "402",
+                                                "Val Vouch", "Substantive"))
+        self.assertNotIn("rex@acme.vc", (self.q() or {}).get("items", {}) if (B, QUEUE) in S3.objects else {})
+        # never Self-Confirmed on this path
+        self.assertFalse(any((c[2] or {}).get("person", {}).get("custom_fields") for c in self.calls if c[0] == "PUT"))
+        self.assertEqual(len(SES.sent), 1)
+        m = SES.sent[0]
+        self.assertEqual(m["Message"]["Subject"]["Data"], "Auto-approved: Access request: Hal Hold")
+        text = m["Message"]["Body"]["Text"]["Data"]
+        self.assertIn("Auto-approved: email domain acme.vc matches Val Vouch "
+                      "(https://app.pipelinecrm.com/people/402), Investor Level Substantive.", text)
+        self.assertIn("Approval email to the requester: sent", text)
+        self.assertIn("Name: Hal Hold", text)
+        self.assertIn(TERM, page({"gg_id": gg_id("rex@acme.vc")}))       # cleared now
+
+    def test_gmail_requester_with_gmail_substantive_client_queued(self):
+        self.submit("rex@gmail.com", auto_people("rex@gmail.com", "val@gmail.com"))
+        self.assertEqual(self.brief_calls, [])
+        self.assert_queued("rex@gmail.com")
+
+    def test_only_match_natural_person_queued(self):
+        self.submit("rex@acme.vc", auto_people("rex@acme.vc", "val@acme.vc", v_type=NATURAL))
+        self.assertEqual(self.brief_calls, [])
+        self.assert_queued("rex@acme.vc")
+
+    def test_only_match_self_confirmed_queued(self):
+        self.submit("rex@acme.vc", auto_people("rex@acme.vc", "val@acme.vc", v_level=SELFC))
+        self.assertEqual(self.brief_calls, [])
+        self.assert_queued("rex@acme.vc")
+
+    def test_rainmaker_domain_never_auto(self):
+        for dom in ("rainmakersecurities.com", "rainmakerapac.com", "ny.rainmakersecurities.com"):
+            self.assertIsNone(lf.dg_auto_domain("x@" + dom), dom)
+        # the gate already refuses Rainmaker addresses outright; nothing is approved or written
+        r = self.submit("rex@rainmakersecurities.com",
+                        auto_people("rex@rainmakersecurities.com", "val@rainmakersecurities.com"))
+        self.assertEqual(r["statusCode"], 403)
+        self.assertEqual((self.brief_calls, self.calls), ([], []))
+
+    def test_requester_tagged_cobroker_queued(self):
+        # live record carries Intermediary-Co-Broker (snapshot not yet): queued as today
+        self.submit("rex@acme.vc", auto_people("rex@acme.vc", "val@acme.vc"),
+                    live={"custom_fields": {"custom_label_3923758": HOLD, "custom_label_3759163": COBROKER}})
+        self.assertEqual(self.brief_calls, [])
+        self.assert_queued("rex@acme.vc")
+
+    def test_requester_source_rms_queued(self):
+        self.submit("rex@acme.vc", auto_people("rex@acme.vc", "val@acme.vc"),
+                    live={"custom_fields": {"custom_label_3923758": HOLD, "custom_label_7777001": 7777002}})
+        self.assertEqual(self.brief_calls, [])
+        self.assert_queued("rex@acme.vc")
+
+    def test_pipeline_write_failure_queued_no_approval_email(self):
+        self.brief_reply = {"ok": False, "reason": "pipeline"}
+        self.submit("rex@acme.vc", auto_people("rex@acme.vc", "val@acme.vc"))
+        self.assertEqual(len(self.brief_calls), 1)
+        self.assert_queued("rex@acme.vc")        # only Chad's ordinary email; nothing to the requester
+        self.assertNotIn(TERM, page({"gg_id": gg_id("rex@acme.vc")}))
+
+    def test_brief_unreachable_or_env_unset_queued(self):
+        def boom(*a):
+            raise urllib.error.URLError("down")
+        self.brief = boom
+        self.submit("rex@acme.vc", auto_people("rex@acme.vc", "val@acme.vc"))
+        self.assert_queued("rex@acme.vc")
+        self.setUp()
+        self.BRIEF_ENV = {"BRIEF_PAGE_URL": "", "BRIEF_PAGE_KEY": ""}
+        self.submit("rex@acme.vc", auto_people("rex@acme.vc", "val@acme.vc"))
+        self.assertEqual(self.brief_calls, [])
+        self.assert_queued("rex@acme.vc")
+
+    def test_unsure_answer_never_auto(self):
+        level_reset(lf)
+        S3.objects[(B, SLIM)] = json.dumps({"people": PEOPLE + auto_people("rex@acme.vc", "val@acme.vc")}).encode()
+        with mock.patch.dict(os.environ, self.BRIEF_ENV), mock.patch.object(lf, "_dg_auto_brief_post", self.brief), \
+                mock.patch.object(lf, "_dg_auto_source_rule", lambda: SRC_RULE):
+            self.post({"gg_id": gg_id("rex@acme.vc")}, self.fields("rex@acme.vc", accredited="unsure"))
+        self.assertEqual(self.brief_calls, [])
+
+    def test_domain_rule_unit(self):
+        for bad in ("a@gmail.com", "a@co.uk", "a@localhost", "a@1.2.3.4", "a@[1.2.3.4]", "a@yahoo.co.uk",
+                    "a@shaw.ca", "a@x..com", "nobody", "a@b@c.com", "a@github.io"):
+            self.assertIsNone(lf.dg_auto_domain(bad), bad)
+        self.assertEqual(lf.dg_auto_domain(" Rex@Acme.VC "), "acme.vc")
+        self.assertEqual(lf.dg_auto_domain("a@acme.co.uk"), "acme.co.uk")
+        self.assertTrue(lf.dg_auto_can_vouch({"7162165"}, {"6484808"}))
+        self.assertFalse(lf.dg_auto_can_vouch({"7162165", "7161646"}, {"6484808"}))     # also Hold
+        self.assertFalse(lf.dg_auto_can_vouch({"6950563"}, {"6484808", "6484810"}))     # also Natural Person
+        for lvl in ("7223459", "7161646", "6950561", "6950562"):
+            self.assertFalse(lf.dg_auto_can_vouch({lvl}, {"6484808"}), lvl)
+        for t in ("6484808", "6484812", "7037492", "6484811", "6859893"):
+            self.assertTrue(lf.dg_auto_can_vouch({"6950564"}, {t}), t)
+        for t in ("6484810", "6577160"):
+            self.assertFalse(lf.dg_auto_can_vouch({"6950564"}, {t}), t)

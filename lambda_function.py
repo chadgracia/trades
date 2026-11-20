@@ -288,6 +288,7 @@ def _people_slim_status_index():
         by_id = {}
         by_email = {}
         dg_by_id = {}
+        vouch_by_domain = {}
         field_counts = {"transactor": 0, "extra_email": 0, "partner_registered": 0}
         for p in (data.get("people") or []) if isinstance(data, dict) else []:
             if not isinstance(p, dict) or p.get("id") is None:
@@ -298,6 +299,12 @@ def _people_slim_status_index():
             if not isinstance(cf, dict):
                 cf = {}
             dg_by_id[str(p["id"])] = _dg_person_slim(p, cf)
+            vl = _cf_option_ids(cf.get(INVESTOR_LEVEL_FIELD))
+            vt = _cf_option_ids(cf.get(DG_TRANSACTOR_FIELD))
+            if dg_auto_can_vouch(vl, vt):
+                rec = dg_by_id[str(p["id"])]
+                for dom in {e.rsplit("@", 1)[1] for e in rec[4] if "@" in e}:
+                    vouch_by_domain.setdefault(dom, []).append((str(p["id"]), rec[2], frozenset(vl)))
             if cf.get(DG_TRANSACTOR_FIELD) not in (None, "", []):
                 field_counts["transactor"] += 1
             if any(isinstance(p.get(k), str) and "@" in p.get(k) for k in ("email2", "home_email")):
@@ -307,7 +314,7 @@ def _people_slim_status_index():
             for em in _person_emails(p):
                 by_email.setdefault(em, set()).add(str(p["id"]))
         cache.update({"etag": etag or obj.get("ETag"), "checked_at": now, "by_id": by_id,
-                      "by_email": by_email, "dg_by_id": dg_by_id,
+                      "by_email": by_email, "dg_by_id": dg_by_id, "dg_vouch_by_domain": vouch_by_domain,
                       "dg_field_counts": field_counts,
                       "last_modified": head.get("LastModified") or obj.get("LastModified")})
         return by_id
@@ -1749,8 +1756,195 @@ def _dg_ad_pipeline(pid, first, last, accredited, eligible, url, ts, ip):
     return level_set
 
 
-def _dg_ad_email(s3, ses, email, d, pid, now):
-    """One email to Chad per address per 24 h. Never to the viewer."""
+# --- Domain auto-approval (access form only) ---------------------------------
+# A requester whose corporate email domain is shared by another cleared client is
+# cleared at once instead of queued. trades decides; daily-brief's access-queue
+# endpoint (act=auto_approve, behind BRIEF_PAGE_URL + BRIEF_PAGE_KEY) executes the
+# same steps as its manual Approve: Pipeline Investor Level = Substantive FIRST, then
+# approved.json, a Pipeline note, the brief's "Auto-approved" list and the existing
+# approval email. Any failure, or the env vars unset = queued exactly as before.
+# Nothing here runs for anyone who doesn't submit the access form.
+FREE_EMAIL_DOMAINS = frozenset({
+    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "msn.com", "yahoo.com",
+    "yahoo.co.uk", "ymail.com", "aol.com", "icloud.com", "me.com", "mac.com", "proton.me", "protonmail.com",
+    "pm.me", "gmx.com", "gmx.de", "mail.com", "mail.ru", "yandex.ru", "yandex.com", "zoho.com", "fastmail.com",
+    "hushmail.com", "qq.com", "163.com", "126.com", "naver.com", "web.de", "t-online.de", "orange.fr", "free.fr",
+    "comcast.net", "verizon.net", "sbcglobal.net", "btinternet.com", "bigpond.com", "rogers.com", "shaw.ca",
+    # beyond the minimum list
+    "outlook.co.uk", "hotmail.co.uk", "hotmail.fr", "live.co.uk", "yahoo.ca", "yahoo.fr", "yahoo.de",
+    "yahoo.co.jp", "yahoo.com.au", "rocketmail.com", "gmx.net", "gmx.at", "gmx.ch", "mail.ch", "tutanota.com",
+    "tuta.io", "hey.com", "att.net", "cox.net", "charter.net", "earthlink.net", "optonline.net", "bellsouth.net",
+    "frontier.com", "libero.it", "virgilio.it", "laposte.net", "sfr.fr", "wanadoo.fr", "freenet.de", "seznam.cz",
+    "wp.pl", "o2.pl", "interia.pl", "ukr.net", "i.ua", "rambler.ru", "bk.ru", "list.ru", "inbox.ru", "sina.com",
+    "sohu.com", "yeah.net", "foxmail.com", "hanmail.net", "daum.net", "rediffmail.com", "ntlworld.com",
+    "sky.com", "talktalk.net", "virginmedia.com", "blueyonder.co.uk", "telus.net", "sympatico.ca",
+    "optusnet.com.au", "xtra.co.nz", "zoho.eu", "mailbox.org", "posteo.de", "duck.com", "aim.com"})
+DG_AUTO_RAINMAKER_DOMAINS = ("rainmakersecurities.com", "rainmakerapac.com")
+# Suffixes that are never one organisation's domain (common multi-label public suffixes).
+DG_AUTO_PUBLIC_SUFFIXES = frozenset({
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "ltd.uk", "plc.uk", "me.uk", "net.uk", "com.au", "net.au", "org.au",
+    "edu.au", "gov.au", "co.nz", "org.nz", "net.nz", "co.jp", "ne.jp", "or.jp", "ac.jp", "co.kr", "or.kr",
+    "co.in", "net.in", "org.in", "com.br", "net.br", "org.br", "com.cn", "net.cn", "org.cn", "com.hk", "org.hk",
+    "com.sg", "org.sg", "edu.sg", "com.tw", "org.tw", "co.za", "org.za", "com.mx", "org.mx", "com.ar", "com.co",
+    "com.tr", "com.my", "com.ph", "com.vn", "co.id", "co.il", "org.il", "co.th", "com.pk", "com.ng", "com.eg",
+    "com.sa", "com.es", "com.pl", "co.at", "or.at", "com.ru", "com.ua", "co.ke", "github.io", "herokuapp.com",
+    "blogspot.com", "appspot.com", "cloudfront.net", "amazonaws.com", "azurewebsites.net", "vercel.app",
+    "netlify.app", "pages.dev", "workers.dev", "firebaseapp.com", "web.app"})
+# Investor Levels that vouch (the gate's cleared set). Self-Confirmed, Hold, Unknown and
+# Non-Accredited never vouch; a record that also carries Hold / Non-Accredited / Self-Confirmed doesn't either.
+DG_AUTO_VOUCH_LEVELS = frozenset({"7162165", "6950563", "7209227", "6950564"})
+DG_AUTO_VOUCH_DISQUALIFY = frozenset({"7161646", "6950562", "7223459"})
+DG_AUTO_LEVEL_RANK = {"6950564": 4, "7209227": 3, "6950563": 2, "7162165": 1}
+# Transactor Types that vouch: VC/PE Fund, Institution, Hedge Fund, Family Office, Syndicator.
+DG_AUTO_VOUCH_TRANSACTORS = frozenset({"6484808", "6484812", "7037492", "6484811", "6859893"})
+# Never vouch even alongside an allowed type: Natural Person, Intermediary-Co-Broker,
+# and the other broker types the gate hard-blocks.
+DG_AUTO_NEVER_VOUCH = frozenset({"6484810", "6577160", "6888332", "6888333"})
+DG_AUTO_REQUESTER_BLOCK = frozenset({"6577160"})      # requester tagged Intermediary-Co-Broker
+DG_AUTO_SOURCE_LABEL = "Source"
+DG_AUTO_SOURCE_RMS = "rms"
+DG_AUTO_SOURCE_TTL = 3600
+DG_AUTO_TIMEOUT = 12
+_dg_auto_source_cache = {"checked_at": 0.0, "rule": None}
+
+
+def dg_auto_can_vouch(level_ids, transactor_ids):
+    """True when a CRM record may vouch for its email domain."""
+    lv, tt = set(level_ids or ()), set(transactor_ids or ())
+    return (bool(lv & DG_AUTO_VOUCH_LEVELS) and not (lv & DG_AUTO_VOUCH_DISQUALIFY)
+            and bool(tt & DG_AUTO_VOUCH_TRANSACTORS) and not (tt & DG_AUTO_NEVER_VOUCH))
+
+
+def dg_auto_domain(email):
+    """The requester's lowercase email domain when it may be used for auto-approval:
+    not a free-mail, Rainmaker, public-suffix-only, single-label or IP-literal domain. Else None."""
+    em = (email or "").strip().lower()
+    if em.count("@") != 1:
+        return None
+    dom = em.split("@", 1)[1].strip().rstrip(".")
+    if not dom or dom.startswith("[") or ":" in dom or not re.fullmatch(r"[a-z0-9.-]+", dom):
+        return None
+    labels = dom.split(".")
+    if len(labels) < 2 or any(not l for l in labels) or all(l.isdigit() for l in labels):
+        return None
+    if labels[-1].isdigit():                       # IPv4-like literal
+        return None
+    if dom in FREE_EMAIL_DOMAINS or dom in DG_AUTO_PUBLIC_SUFFIXES:
+        return None
+    if any(dom == r or dom.endswith("." + r) for r in DG_AUTO_RAINMAKER_DOMAINS):
+        return None
+    return dom
+
+
+def dg_auto_voucher(email, exclude_pids=()):
+    """(pid, name, level label) of the best OTHER cleared person at the requester's
+    domain (highest Investor Level, then lowest id), from the people-slim index. None
+    when the domain is not eligible, nobody vouches, or the index is unreadable."""
+    dom = dg_auto_domain(email)
+    if not dom or _people_slim_status_index() is None:
+        return None
+    skip = {str(x) for x in (exclude_pids or ()) if x}
+    best = None
+    for pid, name, levels in (_people_slim_cache.get("dg_vouch_by_domain") or {}).get(dom, ()):
+        if pid in skip:
+            continue
+        rank = max(DG_AUTO_LEVEL_RANK.get(l, 0) for l in levels)
+        key = (-rank, int(pid) if pid.isdigit() else 0)
+        if best is None or key < best[0]:
+            top = max((l for l in levels if l in DG_AUTO_LEVEL_RANK), key=DG_AUTO_LEVEL_RANK.get)
+            best = (key, (pid, name or "(no name)", DG_IL_LABELS.get(top, top)))
+    return best[1] if best else None
+
+
+def _dg_auto_source_rule():
+    """(field key, RMS option ids) of the person field "Source", cached an hour.
+    None when it can't be resolved: the auto-approval then fails closed (queued)."""
+    c = _dg_auto_source_cache
+    if c["rule"] is not None and time.time() - c["checked_at"] < DG_AUTO_SOURCE_TTL:
+        return c["rule"]
+    try:
+        hits = [f for f in _fields_admin_list('person', DG_AUTO_SOURCE_LABEL)['fields']
+                if (f.get('name') or '').strip().lower() == DG_AUTO_SOURCE_LABEL.lower()]
+        if len(hits) != 1:
+            logger.warning(f"deal-gate: auto-approve Source field not resolved ({len(hits)} matches)")
+            return None
+        f = hits[0]
+        rms = frozenset(str(o.get('id')) for o in f.get('options') or ()
+                        if (o.get('name') or '').strip().lower() == DG_AUTO_SOURCE_RMS)
+        c.update({"rule": (f['key'], rms), "checked_at": time.time()})
+        return c["rule"]
+    except Exception as e:
+        logger.warning(f"deal-gate: auto-approve Source field lookup failed ({type(e).__name__})")
+        return None
+
+
+def dg_auto_requester_ok(cur, source_rule):
+    """The requester's own live Pipeline record may be auto-approved: not
+    Intermediary-Co-Broker, not Source = RMS, not Non-Accredited."""
+    cf = cur.get('custom_fields') if isinstance(cur, dict) and isinstance(cur.get('custom_fields'), dict) else {}
+    if _cf_option_ids(cf.get(DG_TRANSACTOR_FIELD)) & DG_AUTO_REQUESTER_BLOCK:
+        return False
+    if DG_IL_NON_ACCREDITED in _cf_option_ids(cf.get(INVESTOR_LEVEL_FIELD)):
+        return False
+    if not source_rule:
+        return False
+    key, rms = source_rule
+    vals = _cf_option_ids(cf.get(key))
+    if vals & set(rms) or any(v.strip().lower() == DG_AUTO_SOURCE_RMS for v in vals):
+        return False
+    return True
+
+
+def _dg_auto_brief_post(base, bkey, form):
+    """POST act=auto_approve to daily-brief's access-queue endpoint; parsed JSON reply."""
+    sep = '&' if '?' in base else '?'
+    req = urllib.request.Request(
+        f"{base}{sep}view=access-queue&key={urllib.parse.quote(bkey, safe='')}",
+        data=urllib.parse.urlencode(form).encode(), method='POST',
+        headers={'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json'})
+    with urllib.request.urlopen(req, timeout=DG_AUTO_TIMEOUT) as resp:
+        return json.loads(resp.read().decode() or '{}')
+
+
+def _dg_auto_approve(email, pid, exclude_pids, d):
+    """Try the domain auto-approval for one access-form submission. Returns the
+    voucher {pid, name, level, domain, emailed} after daily-brief confirmed the Pipeline
+    write; None in every other case (the caller then queues as before). Never raises,
+    never logs the address, names or the brief URL/key."""
+    try:
+        if d.get('accredited') != 'yes' or not pid:
+            return None
+        base, bkey = os.environ.get('BRIEF_PAGE_URL', ''), os.environ.get('BRIEF_PAGE_KEY', '')
+        if not base or not bkey:
+            return None
+        voucher = dg_auto_voucher(email, set(exclude_pids or ()) | {str(pid)})
+        if not voucher:
+            return None
+        cur = _pd_api('GET', f'/people/{pid}.json') or {}
+        cur = cur.get('person', cur) if isinstance(cur, dict) else {}
+        if not dg_auto_requester_ok(cur, _dg_auto_source_rule()):
+            logger.info("deal-gate: auto-approve not applicable (requester record)")
+            return None
+        dom = dg_auto_domain(email)
+        form = {'act': 'auto_approve', 'email': email.strip().lower(), 'person_id': str(pid), 'domain': dom,
+                'voucher_id': voucher[0], 'voucher_name': voucher[1], 'voucher_level': voucher[2]}
+        for k in ('first_name', 'last_name', 'country', 'employer', 'accredited', 'linkedin', 'from', 'details_at'):
+            form[k] = d.get(k) or ''
+        res = _dg_auto_brief_post(base, bkey, form)
+        if not (isinstance(res, dict) and res.get('ok') is True):
+            logger.info(f"deal-gate: auto-approve not done ({(res or {}).get('reason') if isinstance(res, dict) else 'bad reply'})")
+            return None
+        logger.info("deal-gate: auto-approved by email domain")
+        return {'pid': voucher[0], 'name': voucher[1], 'level': voucher[2], 'domain': dom,
+                'emailed': bool(res.get('emailed'))}
+    except Exception as e:
+        logger.warning(f"deal-gate: auto-approve failed, queued instead ({type(e).__name__})")
+        return None
+
+
+def _dg_ad_email(s3, ses, email, d, pid, now, auto=None):
+    """One email to Chad per address per 24 h (an auto-approval always sends, subject
+    prefixed "Auto-approved: "). Never to the viewer."""
     key = f"{DG_REQUESTS_PREFIX}accessdetails/sent/{dg_email_tag(email)}.json"
     try:
         try:
@@ -1759,7 +1953,7 @@ def _dg_ad_email(s3, ses, email, d, pid, now):
             if not _dg_missing(e):
                 raise
             last = 0.0
-        if now - last < DG_AD_EMAIL_EVERY:
+        if now - last < DG_AD_EMAIL_EVERY and not auto:
             logger.info("deal-gate: access details email skipped (sent in the last 24 h)")
             return False
         lines = [f"Name: {d['first_name']} {d['last_name']}", f"Email: {email}",
@@ -1771,14 +1965,20 @@ def _dg_ad_email(s3, ses, email, d, pid, now):
                  "Pipeline: " + (f"https://app.pipelinecrm.com/people/{pid}" if pid else
                                  "not created yet. The record usually appears within a few minutes; "
                                  "the daily brief queue will link it.")]
+        if auto:
+            lines += [f"Auto-approved: email domain {auto['domain']} matches {auto['name']} "
+                      f"(https://app.pipelinecrm.com/people/{auto['pid']}), Investor Level {auto['level']}.",
+                      "Investor Level set to Substantive. To reverse, change it in Pipeline.",
+                      "Approval email to the requester: " + ("sent" if auto.get('emailed') else "NOT sent")]
         base, bkey = os.environ.get('BRIEF_PAGE_URL', ''), os.environ.get('BRIEF_PAGE_KEY', '')
         if base and bkey:
             sep = '&' if '?' in base else '?'
             lines.append(f"Review: {base}{sep}key={urllib.parse.quote(bkey, safe='')}#access-queue")
         (ses or boto3.client('ses', region_name='us-east-1')).send_email(
             Source=DG_EMAIL_FROM, Destination={'ToAddresses': [DG_EMAIL_REPLY_TO]},
-            Message={'Subject': {'Data': ("Access request (intermediary): " if d['accredited'] == 'intermediary'
-                                          else "Access request: ") + f"{d['first_name']} {d['last_name']}",
+            Message={'Subject': {'Data': ("Auto-approved: " if auto else "")
+                                         + ("Access request (intermediary): " if d['accredited'] == 'intermediary'
+                                            else "Access request: ") + f"{d['first_name']} {d['last_name']}",
                                  'Charset': 'UTF-8'},
                      'Body': {'Text': {'Data': "\n".join(lines) + "\n", 'Charset': 'UTF-8'}}})
         s3.put_object(Bucket=DG_BUCKET, Key=key, ContentType='application/json',
@@ -1852,6 +2052,14 @@ def _dg_access_details(event, s3=None, ses=None, now=None):
         # Not in the hourly snapshot yet (e.g. created by the signup agent minutes ago).
         pid = _dg_live_person_id(email)
         live = bool(pid)
+    auto = _dg_auto_approve(email, pid, pids, d) if d['accredited'] == 'yes' else None
+    if auto:
+        # Cleared now: never queued. Names only from the form (no Self-Confirmed level).
+        url, ts = DG_SITE + path, stamp.strftime('%Y-%m-%d %H:%M:%S UTC')
+        _dg_ad_pipeline(pid, d['first_name'], d['last_name'], 'auto', False, url, ts, ip)
+        dg_mark_level([pid], DG_IL_SUBSTANTIVE)
+        _dg_ad_email(s3, ses, email, d, pid, now, auto=auto)
+        return _dg_sc_back(path, None, event)
     if d['accredited'] == 'intermediary':
         # Broker / adviser / finder: never the investor queue, never an Investor Level.
         saved = dg_queue_details(email, pid, d, 'intermediary', s3, now, section='intermediaries')
