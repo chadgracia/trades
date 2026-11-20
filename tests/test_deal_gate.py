@@ -407,8 +407,8 @@ class LinkRequest(unittest.TestCase):
             "\n\nIt opens the page you were viewing. Once you open it, deal terms on every deal page stay "
             "visible on this device and browser for six months, so you won't need to do this again for "
             "other deals. If you use another device, request a new link there.\n\n"
-            "Please don't forward this link; it is tied to you.\n\nBest wishes,\nChad Gracia\n"))
-        self.assertNotIn("Html", m["Message"]["Body"])
+            "Please don't forward this link; it is tied to you.\n\nBest wishes,\n" + lf.DG_EMAIL_SIGNATURE_TEXT + "\n"))
+        self.assertEqual(set(m["Message"]["Body"]), {"Html", "Text"})
         tok = text.split("v=", 1)[1].split()[0]
         with mock.patch.dict(os.environ, {"VIEW_LINK_SECRET": VIEW_SECRET}):
             self.assertEqual(lf.dg_verify_token(tok), "101")
@@ -884,6 +884,63 @@ class SelfConfirmRoute(unittest.TestCase):
         r = self.post(hal, f"t={self.hal_token()}&path=/")
         self.assertIn("couldn't record your confirmation", r["body"])
         self.assertEqual(self.calls, [])
+
+
+class LinkEmailSignature(unittest.TestCase):
+    """One-click link email: Html + Text parts with the full signature and RMS disclosure."""
+    MARKS = ("Registered Representative, Rainmaker Securities", "WhatsApp: +1-917-549-8969",
+             "DISCLOSURE: Rainmaker Securities, LLC")
+
+    def test_sent_email_has_signature_in_both_parts(self):
+        reset(lf)
+        run(lf, qp={"view": "view-link-request"}, method="POST", body="email=ann@x.com&path=%2Fdeal%2F9&website=",
+            headers={"x-forwarded-for": "9.9.9.9", "content-type": "application/x-www-form-urlencoded"})
+        self.assertEqual(len(SES.sent), 1)
+        m = SES.sent[0]
+        self.assertEqual(m["Source"], "Chad Gracia <cgracia@graciagroup.com>")
+        self.assertEqual(m["Destination"], {"ToAddresses": ["ann@x.com"], "BccAddresses": ["cgracia@rainmakersecurities.com"]})
+        self.assertEqual(m["ReplyToAddresses"], ["cgracia@rainmakersecurities.com"])
+        self.assertEqual(m["Message"]["Subject"]["Data"], "Your link to Gracia Group offers")
+        h, t = m["Message"]["Body"]["Html"]["Data"], m["Message"]["Body"]["Text"]["Data"]
+        for mark in self.MARKS:
+            self.assertIn(mark, h)
+            self.assertIn(mark, t)
+        self.assertEqual(h.count("Chad Gracia"), 1)
+        self.assertEqual(t.count("Chad Gracia"), 1)
+        self.assertIn("Best wishes,\nChad Gracia\nRegistered Representative, Rainmaker Securities\n", t)
+        link = t.split("\n")[3]
+        self.assertTrue(link.startswith("https://trades.graciagroup.com/deal/9?v=101."))
+        self.assertIn(f'<a href="{link}"', h)
+        self.assertIn("Aptos, Calibri, Arial, sans-serif", h)
+        self.assertIn(lf.DG_EMAIL_SIGNATURE_HTML, h)
+
+    def test_parts_with_dummy_token(self):
+        link = "https://trades.graciagroup.com/deal/55716152?v=TESTTOKEN"
+        h, t = lf.dg_email_parts("Sophie", link)
+        self.assertEqual(t, lf.dg_email_text("Sophie", link)[:-len("Chad Gracia\n")]
+                         + lf.DG_EMAIL_SIGNATURE_TEXT + "\n")
+        self.assertIn(f'<a href="{link}" style="color:#1d4ed8;">{link}</a>', h)
+        self.assertIn('<p style="margin:0;">Best wishes,</p><p style="margin:0;">Chad Gracia<br>', h)
+        self.assertNotIn("<", t)
+
+    def test_text_disclosure_matches_html(self):
+        d = lf.DG_EMAIL_SIGNATURE_TEXT
+        self.assertTrue(d.startswith("Chad Gracia\nRegistered Representative, Rainmaker Securities\n"
+                                     "WhatsApp: +1-917-549-8969\n\n"
+                                     "Indications for Accredited Investors: https://trades.graciagroup.com/\n\n"
+                                     "DISCLOSURE: Rainmaker Securities, LLC (\u201cRMS\u201d) is a FINRA registered"))
+        self.assertIn("\n\nRISK FACTORS\n\n", d)
+        self.assertNotIn("&", d)
+        self.assertEqual(d.count("\n\n") + 1, lf.DG_EMAIL_SIGNATURE_HTML.count("<p "))
+        for href in ("https://www.finra.org/#/", "https://www.sipc.org/", "https://brokercheck.finra.org",
+                     "https://www.rainmakersecurities.com/crs"):
+            self.assertIn(f'href="{href}"', lf.DG_EMAIL_SIGNATURE_HTML)
+        self.assertIn('font-weight:700;">RISK FACTORS</p>', lf.DG_EMAIL_SIGNATURE_HTML)
+
+    def test_body_is_escaped(self):
+        h, _ = lf.dg_email_parts("<b>&", "https://trades.graciagroup.com/?v=TESTTOKEN")
+        self.assertIn("Hello &lt;b&gt;&amp;,", h)
+        self.assertNotIn("<b>&", h)
 
 
 # --- Email wording, absolute same-site redirects, six-month cap, log redaction ---

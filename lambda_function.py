@@ -1384,6 +1384,65 @@ DG_EMAIL_FROM = "Chad Gracia <cgracia@graciagroup.com>"
 DG_EMAIL_REPLY_TO = "cgracia@rainmakersecurities.com"
 DG_EMAIL_BCC = "cgracia@rainmakersecurities.com"
 DG_EMAIL_SUBJECT = "Your link to Gracia Group offers"
+DG_EMAIL_FONT_STYLE = "font-family:Aptos, Calibri, Arial, sans-serif;font-size:11pt;color:#000000;width:100%;"
+# Signature + RMS disclosure for client emails (same wording as daily-brief's mailer).
+DG_EMAIL_SIGNATURE_HTML = (
+    '<p style="margin:0;">Chad Gracia<br>'
+    "Registered Representative, Rainmaker Securities<br>"
+    "WhatsApp: +1-917-549-8969</p>"
+    '<p style="margin:12px 0 0 0;">Indications for Accredited Investors: '
+    '<a href="https://trades.graciagroup.com/" style="color:#1d4ed8;">https://trades.graciagroup.com/</a></p>'
+    '<hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">'
+    '<div style="font-size:11px;color:#6b7280;line-height:1.5;">'
+    "<p style=\"margin:0 0 8px 0;\">DISCLOSURE: Rainmaker Securities, LLC (&ldquo;RMS&rdquo;) is a "
+    '<a href="https://www.finra.org/#/" style="color:#6b7280;">FINRA</a> registered broker-dealer and '
+    '<a href="https://www.sipc.org/" style="color:#6b7280;">SIPC</a> member. Find this broker-dealer and its agents on '
+    '<a href="https://brokercheck.finra.org" style="color:#6b7280;">BrokerCheck</a>. Our relationship summary can be found on the '
+    '<a href="https://www.rainmakersecurities.com/crs" style="color:#6b7280;">RMS website</a>.</p>'
+    '<p style="margin:0 0 8px 0;">RMS is engaged by its clients to make referrals to buyers or sellers of private '
+    "securities (&ldquo;Securities&rdquo;). If such client closes a Securities transaction with a buyer or seller so "
+    "referred, RMS is entitled to a success fee from the client. Such success fee may be in the form of cash or in "
+    "warrants to purchase securities of the client or client&rsquo;s affiliate. RMS or RMS representatives may hold "
+    "equity in its issuer clients or in the issuers of securities purchased or sold by the parties to a transaction.</p>"
+    '<p style="margin:0 0 8px 0;">This communication is confidential and is addressed only to its intended recipient. '
+    "This communication does not represent an offer or solicitation to buy or sell Securities. Such an offer must be "
+    "made via definitive legal documentation by the seller of securities.</p>"
+    '<p style="margin:0 0 8px 0;">Investments in the Securities are speculative and involve a high degree of risk. '
+    "An investor in the Securities should have little to no need for liquidity in the foreseeable future and have "
+    "sufficient finances to withstand the loss of the entire investment.</p>"
+    '<p style="margin:0 0 8px 0;">RMS does not recommend the purchase or sale of Securities. Potential buyers or '
+    "sellers of the Securities should seek professional counsel prior to entering into any transaction.</p>"
+    '<p style="margin:0 0 8px 0;font-weight:700;">RISK FACTORS</p>'
+    '<p style="margin:0 0 8px 0;">Investments in the Securities are speculative and involve a high degree of risk. '
+    "Companies engaging in private placements may be early stage and high risk. You should be able to afford the "
+    "increased risk of loss with such investments, including the potential of a total loss.</p>"
+    '<p style="margin:0 0 8px 0;">An investor in the Securities should have little to no need for liquidity in the '
+    "foreseeable future. Unlike an investment purchased on a stock exchange, an investment in a private placement is "
+    "highly illiquid. You will most likely be investing in restricted securities, may have difficulty finding a buyer "
+    "for the securities when you can resell and, as a result, may need to hold the securities indefinitely.</p>"
+    '<p style="margin:0;">Limited disclosure Information. Companies engaging in private placements are not required '
+    "to provide the disclosure that would be required in a registered offering. You may have less information to make "
+    "an informed investment decision than, for example, stock purchased on a stock exchange, including information "
+    "that may help you determine whether the price asked for the investment is a fair price. Potential buyers or "
+    "sellers of the Securities should seek professional counsel prior to entering into any transaction.</p></div>"
+)
+
+
+def dg_html_to_text(h):
+    """Plain text of each <p> in `h`: <br> -> newline, tags stripped, entities unescaped,
+    one blank line between paragraphs."""
+    out = []
+    for block in re.findall(r"<p\b[^>]*>(.*?)</p>", h, re.S):
+        lines = re.sub(r"<br\s*/?>", "\n", block).split("\n")
+        t = "\n".join(" ".join(html_mod.unescape(re.sub(r"<[^>]+>", "", ln)).split()) for ln in lines).strip()
+        if t:
+            out.append(t)
+    return "\n\n".join(out)
+
+
+# Generated from the HTML at import time so the two can never drift.
+DG_EMAIL_SIGNATURE_TEXT = dg_html_to_text(DG_EMAIL_SIGNATURE_HTML)
+_DG_URL_RE = re.compile(r"https://[^\s<>\"']+")
 DG_EMAILS_PER_DAY = 3
 DG_REQUESTS_PER_IP_HOUR = 10
 _DG_EMAIL_RE = re.compile(r"^[^@\s<>\"',;]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}$")
@@ -1466,6 +1525,34 @@ def dg_email_text(first_name, link):
             "Best wishes,\nChad Gracia\n")
 
 
+def _dg_email_line_html(line):
+    """One escaped line with every https:// URL as a clickable link."""
+    out, pos = [], 0
+    for m in _DG_URL_RE.finditer(line):
+        url = m.group(0).rstrip(".,;:!?)")
+        out.append(html_mod.escape(line[pos:m.start()]))
+        out.append(f'<a href="{html_mod.escape(url, quote=True)}" style="color:#1d4ed8;">{html_mod.escape(url)}</a>')
+        pos = m.start() + len(url)
+    out.append(html_mod.escape(line[pos:]))
+    return "".join(out)
+
+
+def dg_email_parts(first_name, link):
+    """(html, text) of the one-click link email: dg_email_text's wording with the trailing
+    "Chad Gracia" replaced by the full signature + RMS disclosure (name appears once)."""
+    body = dg_email_text(first_name, link).rstrip()
+    if body.endswith("\nChad Gracia"):
+        body = body[:-len("Chad Gracia")].rstrip()
+    blocks = [b.strip("\n") for b in re.split(r"\n[ \t]*\n", body) if b.strip()]
+    paras = "".join(
+        f'<p style="margin:{"0" if i == len(blocks) - 1 else "0 0 12px 0"};">'
+        + "<br>".join(_dg_email_line_html(ln) for ln in b.split("\n")) + "</p>"
+        for i, b in enumerate(blocks))
+    html_body = (f'<html><body style="margin:0;padding:0;"><div style="{DG_EMAIL_FONT_STYLE}">'
+                 + paras + DG_EMAIL_SIGNATURE_HTML + "</div></body></html>")
+    return html_body, f"{body}\n{DG_EMAIL_SIGNATURE_TEXT}\n"
+
+
 def _dg_view_link_request(event, s3=None, ses=None, now=None):
     """POST /?view=view-link-request. Same response whatever happens; an email
     goes out only to an address that matches a cleared person. Never writes to
@@ -1506,12 +1593,14 @@ def _dg_view_link_request(event, s3=None, ses=None, now=None):
             return ok
         link = DG_SITE + path + ('&' if '?' in path else '?') + 'v=' + token
         first = (people[1].get(pid) or ((), ''))[1]
+        html_body, text_body = dg_email_parts(first, link)
         (ses or boto3.client('ses', region_name='us-east-1')).send_email(
             Source=DG_EMAIL_FROM,
             Destination={'ToAddresses': [email], 'BccAddresses': [DG_EMAIL_BCC]},
             ReplyToAddresses=[DG_EMAIL_REPLY_TO],
             Message={'Subject': {'Data': DG_EMAIL_SUBJECT, 'Charset': 'UTF-8'},
-                     'Body': {'Text': {'Data': dg_email_text(first, link), 'Charset': 'UTF-8'}}})
+                     'Body': {'Html': {'Data': html_body, 'Charset': 'UTF-8'},
+                              'Text': {'Data': text_body, 'Charset': 'UTF-8'}}})
         logger.info("deal-gate: personal link emailed")
     except Exception as e:
         logger.warning(f"deal-gate: link request failed ({type(e).__name__})")
