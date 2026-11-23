@@ -3319,6 +3319,7 @@ def _render_top_nav(event, is_admin=False, active=None):
         f'<a href="{demand_href}" class="nav-tab">Demand Board</a>'
         + auctions_tab
         + dashboard_tab
+        + '<a href="https://desk.graciagroup.com/faq" class="nav-tab" target="_blank" rel="noopener">FAQ</a>'
         + '</div>'
         + deal_switcher_btn
         + add_order_html
