@@ -103,6 +103,20 @@
 - trades-only: `POST /?view=view-link-request` (email-me-a-link, SES, limits in
   `full-pipeline-cache/deal-gate/requests/`), `POST /?view=self-confirm`, admin JSON `/?view=view-link`.
 
+## Partner data feed (`?view=data-feed&token=`, `?view=data-feed-admin`)
+- Private CSV for approved data partners (PM Insights / MSCI template + DealID, DealURL). Handled at the top of
+  `lambda_handler`, before the event log line. Tokens ONLY from env `DATA_FEED_TOKENS` (`{token: partner}`),
+  `hmac.compare_digest`; missing / bad / empty / malformed = plain 404 "Not found". Log partner name only, never the token.
+- Rows: `tr_filter_deals(_load_deals_from_s3(), admin=False)` (same source + filters as a cleared grid viewer), grid
+  stages Firm/Inquiry/Confirm only, raw Hold stage dropped, plus companies in `full-pipeline-cache/restricted-issuers.json`
+  (missing file = none; any other read error = 503, fails closed). Fields from cached deals.json / companies.json
+  (`feed_row`); never Pipeline at request time. Sort IssuerName, IndicationType, DealID.
+- 120 fetches / partner / hour per container -> 429. Compliance log `data-feed-log/<UTC date>.jsonl` (ts, partner, ip,
+  user_agent, rows) and first-of-day CSV `data-feed-snapshots/<partner-slug>/<date>.csv`; failures never break the response.
+- Admin JSON: partner names, rows_now, rows_served_today, last 20 log entries (ADMIN_KEY; anything else = 404).
+- IAM: Get/Put on `full-pipeline-cache/data-feed-log/*`, `data-feed-snapshots/*`; Get on `restricted-issuers.json`.
+- Tests: `tests/test_data_feed.py`.
+
 ## SECURITY RULES — MANDATORY (read before any change)
 
 This repo is PUBLIC, and so are its GitHub Actions logs. Secrets have leaked from Chad's repos 5-6 times. Never again.

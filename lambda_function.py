@@ -4414,7 +4414,438 @@ def format_valuation(valuation):
         return ""
     return f" (${valuation:.1f}Bn)"
 
+# --- Partner data feed (?view=data-feed&token=..., ?view=data-feed-admin) -----
+# Private CSV feed for approved data partners in their submission-template
+# format. Rows = what a cleared (non-admin) viewer sees on the grid right now:
+# pipeline_deals.json through tr_filter_deals(admin=False), grid stages only,
+# Hold excluded, plus issuers in full-pipeline-cache/restricted-issuers.json.
+# Fields come from the cached full-pipeline-cache deals.json / companies.json;
+# Pipeline is never called at request time. Tokens come ONLY from the env var
+# DATA_FEED_TOKENS ({token: partner_name}); a token is never logged or stored.
+FEED_HEADER = [
+    "IndicationDate", "IndicationType", "IssuerName", "Price", "PriceCurrency",
+    "VolumeConsiderationAmount", "VolumeConsiderationCurrency", "Share Class",
+    "SecurityType", "Direct", "Forward", "SPV", "SPV_Upfront", "SPV_Management",
+    "SPV_Carry", "SPV_Years_Management", "Direct to seller/buyer", "ROFR",
+    "CompanySharecount", "CompanyValuation", "CompanyValuationCurrency", "Comment",
+    "DealID", "DealURL",
+]
+FEED_GRID_STAGES = ("Firm", "Inquiry", "Confirm")   # the only stages the grid renders
+FEED_BUCKET = "full-pipeline-cache"
+FEED_LOG_PREFIX = "data-feed-log/"
+FEED_SNAPSHOT_PREFIX = "data-feed-snapshots/"
+FEED_RESTRICTED_KEY = "restricted-issuers.json"
+FEED_RATE_LIMIT = 120          # fetches per partner per rolling hour (per container)
+FEED_DATA_TTL = 600            # deals.json / companies.json cache per warm container
+FEED_FILENAME = "gracia-indications.csv"
+FEED_DEAL_URL = "https://trades.graciagroup.com/deal/"
+
+FEED_TYPE_FIELD = "custom_label_1958"
+FEED_TYPE_SELL, FEED_TYPE_BUY = 5011675, 5077819
+FEED_GROSS_FIELD = "custom_label_3064339"
+FEED_NET_FIELD = "custom_label_3064369"
+FEED_MAX_FIELD = "custom_label_3064645"
+FEED_MIN_FIELD = "custom_label_3065488"
+FEED_CLASS_FIELD = "custom_label_3064330"
+FEED_CLASS_MAP = {5077831: "Common", 5077834: "Preferred", 5077912: "Preferred/Common",
+                  5077915: "Unknown/Undisclosed"}
+FEED_STRUCTURE_FIELD = "custom_label_3064360"
+FEED_STRUCT_DIRECT, FEED_STRUCT_FORWARD, FEED_STRUCT_FUND = 6250090, 5077903, 5077906
+FEED_STRUCT_UNKNOWN = (6361933, 5077909)     # Unknown, None
+FEED_LAYERS_FIELD = "custom_label_3938743"
+FEED_LAYER_SPV, FEED_LAYER_2, FEED_LAYER_3 = 7000228, 7000229, 7000230
+FEED_FEE_UPFRONT_FIELD = "custom_label_3940560"
+FEED_FEE_MGMT_FIELD = "custom_label_3940558"
+FEED_FEE_CARRY_FIELD = "custom_label_3940559"
+FEED_CP_DIRECT_FIELD = "custom_label_3065662"
+FEED_CP_DIRECT_MAP = {5080984: "Y", 5080987: "N"}
+FEED_LR_VAL_FIELD = "custom_label_3790429"   # company, $B
+
+_FEED_RATE = {}                # partner -> [fetch timestamps]
+_FEED_SNAPSHOT_DONE = set()    # (partner_slug, date) already snapshotted by this container
+_FEED_RAW_CACHE = {'ts': 0.0, 'deals': None, 'companies': None}
+
+
+def feed_tokens():
+    """{token: partner} from DATA_FEED_TOKENS; {} if empty or malformed."""
+    raw = os.environ.get("DATA_FEED_TOKENS", "")
+    if not raw.strip():
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.error("data-feed: DATA_FEED_TOKENS is not valid JSON")
+        return {}
+    if not isinstance(data, dict):
+        logger.error("data-feed: DATA_FEED_TOKENS is not a JSON object")
+        return {}
+    return {str(t): str(p).strip() for t, p in data.items()
+            if isinstance(t, str) and t.strip() and str(p or '').strip()}
+
+
+def feed_partner_for(token):
+    """Partner name for a token (constant-time compare against every token), else None."""
+    if not isinstance(token, str) or not token:
+        return None
+    found = None
+    for t, partner in feed_tokens().items():
+        if hmac.compare_digest(token.encode('utf-8'), t.encode('utf-8')):
+            found = partner
+    return found
+
+
+def feed_slug(partner):
+    return re.sub(r'[^a-z0-9]+', '-', str(partner or '').lower()).strip('-') or 'partner'
+
+
+def feed_rate_ok(partner, now=None):
+    """Record a fetch; False once the partner has more than FEED_RATE_LIMIT in the last hour."""
+    now = time.time() if now is None else now
+    hits = [t for t in _FEED_RATE.get(partner, []) if now - t < 3600]
+    if len(hits) >= FEED_RATE_LIMIT:
+        _FEED_RATE[partner] = hits
+        return False
+    hits.append(now)
+    _FEED_RATE[partner] = hits
+    return True
+
+
+def _feed_num(value):
+    """Plain number text (no $, commas or %); '' if not a number or zero-length."""
+    if value is None or isinstance(value, bool):
+        return ''
+    if isinstance(value, list):
+        value = value[0] if value else None
+        if value is None:
+            return ''
+    s = str(value).strip().replace(',', '').replace('$', '').replace('%', '')
+    if s in ('', 'None', 'null'):
+        return ''
+    try:
+        f = float(s)
+    except ValueError:
+        return ''
+    if f != f or f in (float('inf'), float('-inf')):
+        return ''
+    if f == int(f):
+        return str(int(f))
+    return ('%.10f' % f).rstrip('0').rstrip('.')
+
+
+def _feed_pos(value):
+    """_feed_num, but '' for zero (unset price/size fields are stored as 0)."""
+    n = _feed_num(value)
+    return '' if n in ('', '0') else n
+
+
+def _feed_money(n):
+    """'1234.5' -> '$1,234.50'; whole numbers without cents."""
+    f = float(n)
+    return f"${f:,.0f}" if f == int(f) else f"${f:,.2f}"
+
+
+def feed_structure_flags(cf, grid_structure=''):
+    """(Direct, Forward, SPV) as 'T'/'F', or ('', '', '') when the structure is
+    Unknown / None / blank and no SPV layer is set."""
+    ids = set(_tr_ids((cf or {}).get(FEED_STRUCTURE_FIELD)))
+    layers = set(_tr_ids((cf or {}).get(FEED_LAYERS_FIELD)))
+    spv_layer = bool(layers & {FEED_LAYER_SPV, FEED_LAYER_2, FEED_LAYER_3})
+    known = ids - set(FEED_STRUCT_UNKNOWN)
+    if not known and not spv_layer:
+        return ('', '', '')
+    return ('T' if FEED_STRUCT_DIRECT in ids else 'F',
+            'T' if FEED_STRUCT_FORWARD in ids else 'F',
+            'T' if (FEED_STRUCT_FUND in ids or spv_layer) else 'F')
+
+
+def feed_row(grid, raw, company):
+    """One CSV row (list, FEED_HEADER order) from a grid row (pipeline_deals.json),
+    its raw Pipeline deal (deals.json, may be None) and its company (companies.json,
+    may be None). Only the fields listed in FEED_HEADER are ever read out."""
+    cf = (raw or {}).get('custom_fields') or {}
+    did = str(grid.get('id'))
+    types_ = set(_tr_ids(cf.get(FEED_TYPE_FIELD)))
+    if FEED_TYPE_SELL in types_:
+        itype = 'Ask'
+    elif FEED_TYPE_BUY in types_:
+        itype = 'Bid'
+    else:
+        itype = 'Ask' if (grid.get('type') or '').strip().lower().startswith('sell') else 'Bid'
+    price = _feed_pos(cf.get(FEED_GROSS_FIELD)) if raw else _feed_pos(grid.get('gross'))
+    mx = _feed_pos(cf.get(FEED_MAX_FIELD)) if raw else _feed_pos(grid.get('max_deal_size'))
+    mn = _feed_pos(cf.get(FEED_MIN_FIELD)) if raw else _feed_pos(grid.get('min_deal_size'))
+    net = _feed_pos(cf.get(FEED_NET_FIELD)) if raw else _feed_pos(grid.get('net'))
+    volume = mx or mn
+    cls_ids = _tr_ids(cf.get(FEED_CLASS_FIELD))
+    sec = next((FEED_CLASS_MAP[i] for i in cls_ids if i in FEED_CLASS_MAP), 'Unknown/Undisclosed')
+    direct, forward, spv = feed_structure_flags(cf, grid.get('structure'))
+    if spv == 'T':
+        up = _feed_num(_cf_scalar(cf, FEED_FEE_UPFRONT_FIELD))
+        mg = _feed_num(_cf_scalar(cf, FEED_FEE_MGMT_FIELD))
+        ca = _feed_num(_cf_scalar(cf, FEED_FEE_CARRY_FIELD))
+    else:
+        up = mg = ca = ''
+    cp = next((FEED_CP_DIRECT_MAP[i] for i in _tr_ids(cf.get(FEED_CP_DIRECT_FIELD))
+               if i in FEED_CP_DIRECT_MAP), '')
+    lr = _feed_pos(_cf_scalar((company or {}).get('custom_fields') or {}, FEED_LR_VAL_FIELD))
+    if not lr and company is None:
+        lr = _feed_pos(grid.get('company_lr_val'))
+    valuation = str(int(round(float(lr) * 1_000_000_000))) if lr else ''
+    layers = set(_tr_ids(cf.get(FEED_LAYERS_FIELD)))
+    parts = []
+    if net:
+        parts.append('Net ' + _feed_money(net))
+    if mn:
+        parts.append('Min ' + _feed_money(mn))
+    if FEED_LAYER_2 in layers:
+        parts.append('2-Layer')
+    if FEED_LAYER_3 in layers:
+        parts.append('3-Layer')
+    comment = re.sub(r'[\r\n\t]+', ' ', '; '.join(parts))
+    return [
+        str(grid.get('updated') or '')[:10],
+        itype,
+        str(grid.get('company') or ''),
+        price, 'USD' if price else '',
+        volume, 'USD' if volume else '',
+        '',
+        sec,
+        direct, forward, spv,
+        up, mg, ca,
+        '',
+        cp,
+        '', '',
+        valuation, 'USD' if valuation else '',
+        comment,
+        did,
+        FEED_DEAL_URL + did,
+    ]
+
+
+def _feed_raw_maps(s3=None, now=None):
+    """({deal_id: raw deal}, {company_id: raw company}) from full-pipeline-cache,
+    cached FEED_DATA_TTL. Raises if deals.json can't be read and nothing is cached."""
+    now = time.time() if now is None else now
+    c = _FEED_RAW_CACHE
+    if c['deals'] is not None and now - c['ts'] < FEED_DATA_TTL:
+        return c['deals'], c['companies']
+    s3 = s3 or boto3.client('s3')
+    try:
+        raw = _tr_s3_json(s3, TR_DEALS_KEY)
+        deals = {str(d.get('id')): d for d in ((raw.get('deals') if isinstance(raw, dict) else raw) or [])
+                 if isinstance(d, dict)}
+    except Exception as e:
+        if c['deals'] is not None:
+            logger.error(f"data-feed: deals.json reload failed; using cached copy: {type(e).__name__}")
+            return c['deals'], c['companies']
+        raise
+    try:
+        rawc = _tr_s3_json(s3, TR_COMPANIES_KEY)
+        companies = {}
+        for rec in ((rawc.get('companies') if isinstance(rawc, dict) else rawc) or []):
+            try:
+                companies[int(rec['id'])] = rec
+            except (KeyError, TypeError, ValueError):
+                continue
+    except Exception as e:
+        logger.error(f"data-feed: companies.json load failed; valuation from grid: {type(e).__name__}")
+        companies = c['companies'] or {}
+    c.update(ts=now, deals=deals, companies=companies)
+    return deals, companies
+
+
+def _feed_restricted_ids(s3):
+    """Company ids (int) in restricted-issuers.json; empty set if the file does not
+    exist. Any other read error raises (the feed then fails closed)."""
+    try:
+        data = _tr_s3_json(s3, FEED_RESTRICTED_KEY)
+    except Exception as e:
+        if _dg_missing(e):
+            return set()
+        raise
+    out = set()
+    for c in (data.get('companies') or []) if isinstance(data, dict) else []:
+        try:
+            out.add(int(c['id']))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def feed_rows(s3=None):
+    """Sorted CSV data rows (lists) for the feed. Raises on a data-source failure."""
+    s3 = s3 or boto3.client('s3')
+    grid = tr_filter_deals(_load_deals_from_s3(), admin=False)
+    raw_by_id, companies = _feed_raw_maps(s3)
+    restricted = _feed_restricted_ids(s3)
+    rows = []
+    for g in grid:
+        try:
+            if (g.get('stage') or '') not in FEED_GRID_STAGES:
+                continue
+            raw = raw_by_id.get(str(g.get('id')))
+            if raw:
+                stage_id = (raw.get('deal_stage') or {}).get('id') or raw.get('deal_stage_id')
+                if str(stage_id or '') == str(HOLD_STAGE_ID):
+                    continue
+            cid = _tr_deal_company_id(raw) if raw else None
+            if cid is None:
+                cid = _tr_deal_company_id(g)
+            if cid is not None and cid in restricted:
+                continue
+            rows.append(feed_row(g, raw, companies.get(cid) if cid is not None else None))
+        except Exception as e:
+            logger.error(f"data-feed: skipped deal {g.get('id')}: {type(e).__name__}")
+    rows.sort(key=lambda r: (r[2].lower(), r[1], r[22]))
+    return rows
+
+
+def feed_csv(rows):
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator='\r\n', quoting=csv.QUOTE_MINIMAL)
+    w.writerow(FEED_HEADER)
+    w.writerows(rows)
+    return '﻿' + buf.getvalue()
+
+
+def _feed_not_found():
+    return {'statusCode': 404,
+            'headers': {'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store'},
+            'body': 'Not found'}
+
+
+def _feed_user_agent(event):
+    hdrs = {str(k).lower(): v for k, v in (event.get('headers') or {}).items()}
+    rc = event.get('requestContext') or {}
+    return str(hdrs.get('user-agent') or (rc.get('http') or {}).get('userAgent') or '')[:300]
+
+
+def _feed_log(s3, partner, event, row_count, body, now):
+    """Compliance log line + first-of-day snapshot. Never raises."""
+    day = now.strftime('%Y-%m-%d')
+    try:
+        key = f"{FEED_LOG_PREFIX}{day}.jsonl"
+        try:
+            prev = s3.get_object(Bucket=FEED_BUCKET, Key=key)['Body'].read().decode('utf-8')
+        except Exception as e:
+            if not _dg_missing(e):
+                raise
+            prev = ''
+        line = json.dumps({'ts': now.strftime('%Y-%m-%dT%H:%M:%SZ'), 'partner': partner,
+                           'ip': _dg_client_ip(event), 'user_agent': _feed_user_agent(event),
+                           'rows': row_count})
+        if prev and not prev.endswith('\n'):
+            prev += '\n'
+        s3.put_object(Bucket=FEED_BUCKET, Key=key, Body=(prev + line + '\n').encode('utf-8'),
+                      ContentType='application/x-ndjson')
+    except Exception as e:
+        logger.error(f"data-feed: log write failed: {type(e).__name__}")
+    slug = feed_slug(partner)
+    if (slug, day) in _FEED_SNAPSHOT_DONE:
+        return
+    try:
+        skey = f"{FEED_SNAPSHOT_PREFIX}{slug}/{day}.csv"
+        try:
+            s3.head_object(Bucket=FEED_BUCKET, Key=skey)
+            exists = True
+        except Exception as e:
+            if not _dg_missing(e) and '404' not in str(e):
+                raise
+            exists = False
+        if not exists:
+            s3.put_object(Bucket=FEED_BUCKET, Key=skey, Body=body.encode('utf-8'),
+                          ContentType='text/csv; charset=utf-8')
+        _FEED_SNAPSHOT_DONE.add((slug, day))
+    except Exception as e:
+        logger.error(f"data-feed: snapshot write failed: {type(e).__name__}")
+
+
+def data_feed_response(event, s3=None, now=None):
+    """GET ?view=data-feed&token=... -> CSV, 404 (bad/missing token or no config), 429, 503."""
+    qp = event.get('queryStringParameters') or {}
+    partner = feed_partner_for(qp.get('token'))
+    if not partner:
+        logger.info("data-feed: rejected request")
+        return _feed_not_found()
+    if not feed_rate_ok(partner):
+        logger.warning(f"data-feed: rate limit hit for {partner}")
+        return {'statusCode': 429,
+                'headers': {'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store',
+                            'Retry-After': '3600'},
+                'body': 'Too many requests'}
+    s3 = s3 or boto3.client('s3')
+    try:
+        rows = feed_rows(s3)
+    except Exception as e:
+        logger.error(f"data-feed: data unavailable for {partner}: {type(e).__name__}")
+        return {'statusCode': 503,
+                'headers': {'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store'},
+                'body': 'Temporarily unavailable'}
+    body = feed_csv(rows)
+    _feed_log(s3, partner, event, len(rows), body, now or datetime.now(timezone.utc))
+    logger.info(f"data-feed: served {partner} rows={len(rows)}")
+    return {'statusCode': 200,
+            'headers': {'Content-Type': 'text/csv; charset=utf-8',
+                        'Content-Disposition': f'inline; filename="{FEED_FILENAME}"',
+                        'Cache-Control': 'no-store'},
+            'body': body}
+
+
+def _feed_read_log(s3, day):
+    try:
+        text = s3.get_object(Bucket=FEED_BUCKET, Key=f"{FEED_LOG_PREFIX}{day}.jsonl")['Body'].read().decode('utf-8')
+    except Exception as e:
+        if not _dg_missing(e):
+            logger.error(f"data-feed: log read failed: {type(e).__name__}")
+        return []
+    out = []
+    for ln in text.splitlines():
+        try:
+            out.append(json.loads(ln))
+        except ValueError:
+            continue
+    return out
+
+
+def data_feed_admin_response(event, s3=None, now=None):
+    """GET ?view=data-feed-admin&admin_key=... -> JSON status (partner names only)."""
+    if not _dg_is_admin(event):
+        return _feed_not_found()
+    s3 = s3 or boto3.client('s3')
+    now = now or datetime.now(timezone.utc)
+    partners = sorted(set(feed_tokens().values()))
+    try:
+        current = len(feed_rows(s3))
+    except Exception as e:
+        logger.error(f"data-feed: admin row count failed: {type(e).__name__}")
+        current = None
+    today = _feed_read_log(s3, now.strftime('%Y-%m-%d'))
+    entries = today
+    if len(entries) < 20:
+        entries = _feed_read_log(s3, (now - timedelta(days=1)).strftime('%Y-%m-%d')) + entries
+    return _dg_json(200, {
+        'partners_configured': len(partners),
+        'partners': partners,
+        'rows_now': current,
+        'rows_served_today': today[-1].get('rows') if today else None,
+        'fetches_today': len(today),
+        'last_entries': entries[-20:],
+    })
+# --- end partner data feed ---
+
+
 def lambda_handler(event, context):
+    # Partner data feed: handled before the event log line so nothing about the
+    # request (token included, though it is redacted anyway) reaches the logs.
+    _feed_view = (event.get('queryStringParameters') or {}).get('view')
+    if _feed_view in ('data-feed', 'data-feed-admin'):
+        if _get_http_method(event) not in ('GET', 'HEAD'):
+            return _feed_not_found()
+        if _feed_view == 'data-feed':
+            return data_feed_response(event)
+        return data_feed_admin_response(event)
     logger.info('Event received: %s', json.dumps(dg_redacted_event(event), default=str))
     logger.info("Lambda function started")
 
