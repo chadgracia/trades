@@ -255,7 +255,7 @@ class Rows(Base):
         self.assertEqual(r[COL["Direct to seller/buyer"]], "Y")
         self.assertEqual((r[COL["CompanyValuation"]], r[COL["CompanyValuationCurrency"]]),
                          ("1250000000", "USD"))
-        self.assertEqual(r[COL["Comment"]], "Net $24; Min $100,000")
+        self.assertEqual(r[COL["Comment"]], "Net $24.00; Min $100,000")
         self.assertEqual(r[COL["DealURL"]], "https://trades.graciagroup.com/deal/1")
         for col in ("SPV_Years_Management", "ROFR", "CompanySharecount"):
             self.assertEqual(r[COL[col]], "")
@@ -329,6 +329,54 @@ class Rows(Base):
         self.assertIn("8", self.by_id())
 
 
+class NumberFormat(Base):
+    def row(self, cfx, company_val=None, **g):
+        comp = None if company_val is None else {"custom_fields": {"custom_label_3790429": company_val}}
+        return lf.feed_row(grid(60, "X", **g), raw(60, 1, cf(SELL, cfx)), comp)
+
+    def test_volume_whole_number(self):
+        for v, want in ((4331232.67, "4331233"), ("4331232.6700000000", "4331233"),
+                        (1406004.18, "1406004"), (2500.0, "2500"), (2.5, "3"), (None, ""), ("", "")):
+            self.assertEqual(self.row({"custom_label_3064645": v})[COL["VolumeConsiderationAmount"]], want, v)
+
+    def test_volume_min_fallback_rounded(self):
+        r = self.row({"custom_label_3065488": 1406004.18})
+        self.assertEqual(r[COL["VolumeConsiderationAmount"]], "1406004")
+        self.assertEqual(r[COL["Comment"]], "Min $1,406,004")
+
+    def test_price_two_decimals(self):
+        for v, want in ((291.2, "291.2"), ("21.580000", "21.58"), (21.58, "21.58"), (2500.0, "2500"),
+                        (4331232.67, "4331232.67"), (2.675, "2.68"), (1.005, "1.01"), (0.1 + 0.2, "0.3"),
+                        (None, ""), ("", ""), ("abc", "")):
+            r = self.row({"custom_label_3064339": v})
+            self.assertEqual(r[COL["Price"]], want, v)
+            self.assertEqual(r[COL["PriceCurrency"]], "USD" if want else "")
+
+    def test_fees_two_decimals(self):
+        r = self.row({"custom_label_3064360": 5077906, "custom_label_3940560": 1.005,
+                      "custom_label_3940558": "2.000000", "custom_label_3940559": 0.1 + 0.2})
+        self.assertEqual((r[COL["SPV_Upfront"]], r[COL["SPV_Management"]], r[COL["SPV_Carry"]]),
+                         ("1.01", "2", "0.3"))
+        r = self.row({"custom_label_3064360": 5077906, "custom_label_3940560": None})
+        self.assertEqual(r[COL["SPV_Upfront"]], "")
+
+    def test_valuation_whole_number(self):
+        for v, want in ((1.406004184, "1406004184"), (0.1 + 0.2, "300000000"), ("21.58", "21580000000"),
+                        (291.2, "291200000000"), (None, ""), ("", "")):
+            self.assertEqual(self.row({}, company_val=v)[COL["CompanyValuation"]], want, v)
+
+    def test_comment_amounts(self):
+        r = self.row({"custom_label_3064369": 24.5, "custom_label_3065488": 100000})
+        self.assertEqual(r[COL["Comment"]], "Net $24.50; Min $100,000")
+        r = self.row({"custom_label_3064369": 4331232.67, "custom_label_3065488": 4331232.67})
+        self.assertEqual(r[COL["Comment"]], "Net $4,331,232.67; Min $4,331,233")
+
+    def test_no_float_artifacts_anywhere(self):
+        body = self.fetch()["body"]
+        self.assertNotRegex(body, r"\d\.\d{3,}")
+        self.assertNotIn("e+", body)
+
+
 class Logging(Base):
     NOW = datetime(2026, 11, 25, 15, 0, tzinfo=timezone.utc)
 
@@ -343,6 +391,26 @@ class Logging(Base):
                                  "rows": 4})
         snaps = [k for k in self.fake.puts if k.startswith("data-feed-snapshots/")]
         self.assertEqual(snaps, ["data-feed-snapshots/pm-insights/2026-11-25.csv"])
+
+    def test_admin_reads_same_key(self):
+        lf.data_feed_response(self.event(token=TOKEN), now=self.NOW)
+        with mock.patch.object(lf, "ADMIN_KEY", "test-admin-key"):
+            ev = self.event()
+            ev["queryStringParameters"] = {"view": "data-feed-admin", "admin_key": "test-admin-key"}
+            data = json.loads(lf.data_feed_admin_response(ev, now=self.NOW)["body"])
+        self.assertEqual(data["fetches_today"], 1)
+        self.assertEqual(data["last_entries"][0]["partner"], "PM Insights")
+
+    def test_write_failure_logged_with_type(self):
+        class Denied(Exception):
+            response = {"Error": {"Code": "AccessDenied"}}
+        with mock.patch.object(self.fake, "put_object", side_effect=Denied()), \
+                self.assertLogs(lf.logger, level=logging.ERROR) as cm:
+            r = lf.data_feed_response(self.event(token=TOKEN), now=self.NOW)
+        self.assertEqual(r["statusCode"], 200)
+        text = "\n".join(cm.output)
+        self.assertIn("data-feed: log write failed: Denied AccessDenied", text)
+        self.assertIn("data-feed: snapshot write failed: Denied AccessDenied", text)
 
     def test_log_failure_still_serves(self):
         self.fake.fail.update({"data-feed-log/2026-11-25.jsonl"})

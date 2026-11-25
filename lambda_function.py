@@ -18,6 +18,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, ROUND_HALF_EVEN
 
 
 # --- Additive Cognito identity capture (does not affect access) ---
@@ -4510,38 +4511,61 @@ def feed_rate_ok(partner, now=None):
     return True
 
 
-def _feed_num(value):
-    """Plain number text (no $, commas or %); '' if not a number or zero-length."""
-    if value is None or isinstance(value, bool):
-        return ''
+def _feed_dec(value):
+    """Decimal from a custom-field / grid value, or None (blank, non-numeric, NaN/inf).
+    Floats are converted exactly and then snapped to 10 places, so binary-float noise
+    (2.675 stored as 2.67499999...) never decides a rounding. No str()/repr() of floats."""
     if isinstance(value, list):
         value = value[0] if value else None
-        if value is None:
-            return ''
-    s = str(value).strip().replace(',', '').replace('$', '').replace('%', '')
-    if s in ('', 'None', 'null'):
-        return ''
+    if value is None or isinstance(value, bool):
+        return None
     try:
-        f = float(s)
-    except ValueError:
+        if isinstance(value, float):
+            d = Decimal(value).quantize(Decimal('1E-10'), rounding=ROUND_HALF_EVEN)
+        elif isinstance(value, int):
+            d = Decimal(value)
+        else:
+            t = str(value).strip().replace(',', '').replace('$', '').replace('%', '')
+            if t in ('', 'None', 'null'):
+                return None
+            d = Decimal(t)
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    return d if d.is_finite() else None
+
+
+def _feed_pos_dec(value):
+    """_feed_dec, but None for zero (unset price/size fields are stored as 0)."""
+    d = _feed_dec(value)
+    return None if d is None or d == 0 else d
+
+
+def _feed_int(d):
+    """Decimal -> plain integer text, half-up (4331232.67 -> '4331233'); '' for None."""
+    if d is None:
         return ''
-    if f != f or f in (float('inf'), float('-inf')):
+    return format(d.quantize(Decimal(1), rounding=ROUND_HALF_UP) + 0, 'f')
+
+
+def _feed_2dp(d):
+    """Decimal -> at most 2 decimals, half-up, trailing zeros stripped
+    (21.580000 -> '21.58', 2500.0 -> '2500'); '' for None."""
+    if d is None:
         return ''
-    if f == int(f):
-        return str(int(f))
-    return ('%.10f' % f).rstrip('0').rstrip('.')
+    t = format(d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) + 0, 'f')
+    if '.' in t:
+        t = t.rstrip('0').rstrip('.')
+    return t
 
 
-def _feed_pos(value):
-    """_feed_num, but '' for zero (unset price/size fields are stored as 0)."""
-    n = _feed_num(value)
-    return '' if n in ('', '0') else n
+def _feed_net_money(d):
+    """'Net' comment amount: 2 decimals with separators (24.5 -> '$24.50')."""
+    return '${:,}'.format(d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) + 0)
 
 
-def _feed_money(n):
-    """'1234.5' -> '$1,234.50'; whole numbers without cents."""
-    f = float(n)
-    return f"${f:,.0f}" if f == int(f) else f"${f:,.2f}"
+def _feed_min_money(d):
+    """'Min' comment amount: whole dollars with separators (100000 -> '$100,000')."""
+    return '${:,}'.format(d.quantize(Decimal(1), rounding=ROUND_HALF_UP) + 0)
 
 
 def feed_structure_flags(cf, grid_structure=''):
@@ -4571,32 +4595,34 @@ def feed_row(grid, raw, company):
         itype = 'Bid'
     else:
         itype = 'Ask' if (grid.get('type') or '').strip().lower().startswith('sell') else 'Bid'
-    price = _feed_pos(cf.get(FEED_GROSS_FIELD)) if raw else _feed_pos(grid.get('gross'))
-    mx = _feed_pos(cf.get(FEED_MAX_FIELD)) if raw else _feed_pos(grid.get('max_deal_size'))
-    mn = _feed_pos(cf.get(FEED_MIN_FIELD)) if raw else _feed_pos(grid.get('min_deal_size'))
-    net = _feed_pos(cf.get(FEED_NET_FIELD)) if raw else _feed_pos(grid.get('net'))
-    volume = mx or mn
+    price = _feed_2dp(_feed_pos_dec(cf.get(FEED_GROSS_FIELD) if raw else grid.get('gross')))
+    mx = _feed_pos_dec(cf.get(FEED_MAX_FIELD) if raw else grid.get('max_deal_size'))
+    mn = _feed_pos_dec(cf.get(FEED_MIN_FIELD) if raw else grid.get('min_deal_size'))
+    net = _feed_pos_dec(cf.get(FEED_NET_FIELD) if raw else grid.get('net'))
+    volume = _feed_int(mx if mx is not None else mn)
+    if volume == '0':
+        volume = ''
     cls_ids = _tr_ids(cf.get(FEED_CLASS_FIELD))
     sec = next((FEED_CLASS_MAP[i] for i in cls_ids if i in FEED_CLASS_MAP), 'Unknown/Undisclosed')
     direct, forward, spv = feed_structure_flags(cf, grid.get('structure'))
     if spv == 'T':
-        up = _feed_num(_cf_scalar(cf, FEED_FEE_UPFRONT_FIELD))
-        mg = _feed_num(_cf_scalar(cf, FEED_FEE_MGMT_FIELD))
-        ca = _feed_num(_cf_scalar(cf, FEED_FEE_CARRY_FIELD))
+        up = _feed_2dp(_feed_dec(_cf_scalar(cf, FEED_FEE_UPFRONT_FIELD)))
+        mg = _feed_2dp(_feed_dec(_cf_scalar(cf, FEED_FEE_MGMT_FIELD)))
+        ca = _feed_2dp(_feed_dec(_cf_scalar(cf, FEED_FEE_CARRY_FIELD)))
     else:
         up = mg = ca = ''
     cp = next((FEED_CP_DIRECT_MAP[i] for i in _tr_ids(cf.get(FEED_CP_DIRECT_FIELD))
                if i in FEED_CP_DIRECT_MAP), '')
-    lr = _feed_pos(_cf_scalar((company or {}).get('custom_fields') or {}, FEED_LR_VAL_FIELD))
-    if not lr and company is None:
-        lr = _feed_pos(grid.get('company_lr_val'))
-    valuation = str(int(round(float(lr) * 1_000_000_000))) if lr else ''
+    lr = _feed_pos_dec(_cf_scalar((company or {}).get('custom_fields') or {}, FEED_LR_VAL_FIELD))
+    if lr is None and company is None:
+        lr = _feed_pos_dec(grid.get('company_lr_val'))
+    valuation = _feed_int(lr * 1_000_000_000) if lr is not None else ''
     layers = set(_tr_ids(cf.get(FEED_LAYERS_FIELD)))
     parts = []
-    if net:
-        parts.append('Net ' + _feed_money(net))
-    if mn:
-        parts.append('Min ' + _feed_money(mn))
+    if net is not None:
+        parts.append('Net ' + _feed_net_money(net))
+    if mn is not None:
+        parts.append('Min ' + _feed_min_money(mn))
     if FEED_LAYER_2 in layers:
         parts.append('2-Layer')
     if FEED_LAYER_3 in layers:
@@ -4722,6 +4748,12 @@ def _feed_user_agent(event):
     return str(hdrs.get('user-agent') or (rc.get('http') or {}).get('userAgent') or '')[:300]
 
 
+def _feed_err(e):
+    """Exception type plus the S3 error code when there is one, e.g. 'ClientError AccessDenied'."""
+    code = (getattr(e, 'response', None) or {}).get('Error', {}).get('Code')
+    return f"{type(e).__name__} {code}" if code else type(e).__name__
+
+
 def _feed_log(s3, partner, event, row_count, body, now):
     """Compliance log line + first-of-day snapshot. Never raises."""
     day = now.strftime('%Y-%m-%d')
@@ -4741,7 +4773,7 @@ def _feed_log(s3, partner, event, row_count, body, now):
         s3.put_object(Bucket=FEED_BUCKET, Key=key, Body=(prev + line + '\n').encode('utf-8'),
                       ContentType='application/x-ndjson')
     except Exception as e:
-        logger.error(f"data-feed: log write failed: {type(e).__name__}")
+        logger.error(f"data-feed: log write failed: {_feed_err(e)}")
     slug = feed_slug(partner)
     if (slug, day) in _FEED_SNAPSHOT_DONE:
         return
@@ -4759,7 +4791,7 @@ def _feed_log(s3, partner, event, row_count, body, now):
                           ContentType='text/csv; charset=utf-8')
         _FEED_SNAPSHOT_DONE.add((slug, day))
     except Exception as e:
-        logger.error(f"data-feed: snapshot write failed: {type(e).__name__}")
+        logger.error(f"data-feed: snapshot write failed: {_feed_err(e)}")
 
 
 def data_feed_response(event, s3=None, now=None):
@@ -4798,7 +4830,7 @@ def _feed_read_log(s3, day):
         text = s3.get_object(Bucket=FEED_BUCKET, Key=f"{FEED_LOG_PREFIX}{day}.jsonl")['Body'].read().decode('utf-8')
     except Exception as e:
         if not _dg_missing(e):
-            logger.error(f"data-feed: log read failed: {type(e).__name__}")
+            logger.error(f"data-feed: log read failed: {_feed_err(e)}")
         return []
     out = []
     for ln in text.splitlines():
